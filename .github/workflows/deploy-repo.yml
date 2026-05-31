@@ -47,14 +47,14 @@ jobs:
 
           # Loop over every addon folder in main/addons/
           for ADDON_DIR in main/addons/*/; do
-            ADDON_ID=$(basename "$ADDON_DIR")
+            ADDON_ID=$(xmllint --xpath 'string(/addon/@id)' "${ADDON_DIR}addon.xml")
 
             if [ ! -f "${ADDON_DIR}addon.xml" ]; then
               echo "Skipping $ADDON_ID: no addon.xml found."
               continue
             fi
 
-            VERSION=$(grep -oP 'version="\K[^"]+' "${ADDON_DIR}addon.xml" | head -n 1)
+            VERSION=$(xmllint --xpath 'string(/addon/@version)' "${ADDON_DIR}addon.xml")
             ZIP_NAME="${ADDON_ID}-${VERSION}.zip"
             TAG="${ADDON_ID}-v${VERSION}"
 

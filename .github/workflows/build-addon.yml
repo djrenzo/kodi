@@ -63,8 +63,13 @@ jobs:
             exit 1
           fi
 
-          VERSION=$(grep -oP 'version="\K[^"]+' "$ADDON_DIR/addon.xml" | head -n 1)
-          ADDON_ID=$(grep -oP 'id="\K[^"]+' "$ADDON_DIR/addon.xml" | head -n 1)
+          VERSION=$(xmllint --xpath 'string(/addon/@version)' "$ADDON_DIR/addon.xml")
+          ADDON_ID=$(xmllint --xpath 'string(/addon/@id)' "$ADDON_DIR/addon.xml")
+
+          if [ -z "$VERSION" ] || [ -z "$ADDON_ID" ]; then
+            echo "::error::Could not extract version or id from addon.xml"
+            exit 1
+          fi
 
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "addon_id=$ADDON_ID" >> $GITHUB_OUTPUT
