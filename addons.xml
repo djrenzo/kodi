@@ -55,18 +55,4 @@
 		<language>es</language>
 	</extension>
 </addon>
-<addon id="repository.djrenzo" version="1.0.0" name="DJRenzo Repository" provider-name="djrenzo">
-  <extension point="xbmc.addon.repository" name="DJRenzo Repository">
-    <dir>
-      <info compressed="false">https://raw.githubusercontent.com/djrenzo/kodi/gh-pages/addons.xml</info>
-      <checksum>https://raw.githubusercontent.com/djrenzo/kodi/gh-pages/addons.xml.md5</checksum>
-      <datadir zip="true">https://raw.githubusercontent.com/djrenzo/kodi/gh-pages/</datadir>
-    </dir>
-  </extension>
-  <extension point="xbmc.addon.metadata">
-    <summary>DJRenzo Kodi Repository</summary>
-    <description>Personal Kodi repository by DJRenzo</description>
-    <platform>all</platform>
-  </extension>
-</addon>
 </addons>
