@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<addon id="repository.djrenzo" version="1.0.0" name="DJRenzo Repository" provider-name="djrenzo">
+  <extension point="xbmc.addon.repository" name="DJRenzo Repository">
+    <info compressed="false">https://djrenzo.github.io/kodi/addons.xml</info>
+    <checksum>https://djrenzo.github.io/kodi/addons.xml.md5</checksum>
+    <datadir zip="true">https://djrenzo.github.io/kodi/</datadir>
+  </extension>
+  <extension point="xbmc.addon.metadata">
+    <summary>DJRenzo Kodi Repository</summary>
+    <description>Personal Kodi repository by DJRenzo</description>
+    <platform>all</platform>
+  </extension>
+</addon>
