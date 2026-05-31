@@ -19,14 +19,15 @@ jobs:
 
       - name: Checkout or create gh-pages branch
         run: |
+          GH_PAGES="${{ github.workspace }}/../gh-pages"
           cd main
           if git ls-remote --heads origin gh-pages | grep -q gh-pages; then
             git fetch origin gh-pages
-            git worktree add ../gh-pages gh-pages
+            git worktree add "$GH_PAGES" gh-pages
           else
             echo "gh-pages branch not found, creating it fresh."
-            mkdir -p ../gh-pages
-            cd ../gh-pages
+            mkdir -p "$GH_PAGES"
+            cd "$GH_PAGES"
             git init
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -38,7 +39,7 @@ jobs:
       - name: Fetch all addon releases and build addons.xml
         run: |
           REPO="${{ github.repository }}"
-          GH_PAGES="../gh-pages"
+          GH_PAGES="${{ github.workspace }}/../gh-pages"
 
           # Start addons.xml
           echo '<?xml version="1.0" encoding="UTF-8"?>' > addons.xml
@@ -94,7 +95,7 @@ jobs:
 
       - name: Create index.html for the repo page
         run: |
-          GH_PAGES="../gh-pages"
+          GH_PAGES="${{ github.workspace }}/../gh-pages"
           REPO_NAME=$(basename "${{ github.repository }}")
           REPO_URL="https://$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]').github.io/$(basename '${{ github.repository }}')"
 
@@ -121,7 +122,7 @@ jobs:
 
       - name: Commit and push gh-pages
         run: |
-          cd ../gh-pages
+          cd ${{ github.workspace }}/../gh-pages
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
