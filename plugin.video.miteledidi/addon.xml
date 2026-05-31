@@ -1,30 +1,4 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<addons>
-<addon id="plugin.video.atresplayerdidi" version="12.2" name="atresplayer[COLOR aqua] didi[/COLOR]" provider-name="equipo tvdidi">
-  <requires>
-    <import addon="script.module.requests" />
-    <import addon="script.module.six" />
-  </requires>
-	<extension point="xbmc.python.pluginsource" library="default.py">
-		<provides>video</provides>
-	</extension>
-	
-	<extension point="xbmc.addon.metadata">
-    <platform>all</platform>
-		<summary lang="en">atresplayerdidi</summary>
-		<summary lang="da">atresplayerdidi</summary>
-		<description lang="en">atresplayerdidi for my loml</description>
-		<disclaimer>hi message for you</disclaimer>
-		<website></website>
-		<license>GPL 2.0</license>
-		<platform>all</platform>
-    <assets>
-        <icon>icon.jpg</icon>
-        <fanart>fanart.png</fanart>
-    </assets>        
-		<language>es</language>
-	</extension>
-</addon>
 <addon
 	id="plugin.video.miteledidi"
   version="1.3"
@@ -55,4 +29,3 @@
 		<language>es</language>
 	</extension>
 </addon>
-</addons>
