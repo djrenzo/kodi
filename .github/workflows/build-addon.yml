@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       addon_id:
-        description: "Addon folder name to build (e.g. plugin.video.myaddon)"
-        required: true
+        description: "Addon folder name to build (leave empty to build all)"
+        required: false
         type: string
 
 permissions:
@@ -30,9 +30,16 @@ jobs:
         id: changed
         run: |
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "addons=[\"${{ inputs.addon_id }}\"]" >> $GITHUB_OUTPUT
+            if [ -n "${{ inputs.addon_id }}" ]; then
+              # Specific addon requested
+              echo "addons=[\"${{ inputs.addon_id }}\"]" >> $GITHUB_OUTPUT
+            else
+              # No input provided — build all addons found in the addons/ folder
+              ALL=$(ls -d addons/*/ 2>/dev/null | xargs -I{} basename {} | jq -R . | jq -sc .)
+              echo "addons=$ALL" >> $GITHUB_OUTPUT
+            fi
           else
-            # Find which addon folders changed
+            # Push event — only build addons whose files changed
             CHANGED=$(git diff --name-only HEAD~1 HEAD | grep '^addons/' | cut -d'/' -f2 | sort -u)
             if [ -z "$CHANGED" ]; then
               echo "addons=[]" >> $GITHUB_OUTPUT
