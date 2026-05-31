@@ -135,7 +135,7 @@ def query_collections(season_id):
                     .get("areaContainersConnection") \
                     .get("areaContainers")[1] \
                     .get("areas")[0] \
-                    .get("sections")[0] \
+                    .get("sections")[1] \
                     .get("collections")
 
   return [{"title": c.get("title"), "id": c.get("id")} for c in collections]
