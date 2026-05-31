@@ -122,23 +122,26 @@ def query_programs(code, after="", limit=10):
     return (itemsConnection.get("items"), itemsConnection.get("pageInfo"))
 
 def query_seasons(series_id):
-  r = query_series_page(ref_id=series_id).json()
-  return r.get("data") \
+    r = query_series_page(ref_id=series_id).json()
+    return r.get("data") \
           .get("getSeriesPage") \
           .get("dataSource") \
           .get("seasons")
 
-def query_collections(season_id):
-  r = query_series_page(ref_id=season_id).json()
-  collections = r.get("data") \
+def query_collections(season_id, area=1):
+    r = query_series_page(ref_id=season_id).json()
+    collections = r.get("data") \
                     .get("getSeriesPage") \
                     .get("areaContainersConnection") \
-                    .get("areaContainers")[1] \
+                    .get("areaContainers")[area] \
                     .get("areas")[0] \
-                    .get("sections")[1] \
+                    .get("sections")[0] \
                     .get("collections")
-
-  return [{"title": c.get("title"), "id": c.get("id")} for c in collections]
+    
+    if collections[0].get("title"):
+        return [{"title": c.get("title"), "id": c.get("id")} for c in collections]
+    return query_collections(season_id, area=area+1)
+    
 
 def query_episodes(collection_id, after="", limit=10):
     if isinstance(after, int):
