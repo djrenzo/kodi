@@ -101,6 +101,35 @@ jobs:
           mv addons.xml "$GH_PAGES/addons.xml"
           mv addons.xml.md5 "$GH_PAGES/addons.xml.md5"
 
+      - name: Generate repository installer zip
+        run: |
+          GH_PAGES="${{ github.workspace }}/../gh-pages"
+          REPO_URL="https://$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]').github.io/$(basename '${{ github.repository }}')"
+
+          # Create the repository addon folder
+          mkdir -p /tmp/repository.djrenzo
+
+          cat > /tmp/repository.djrenzo/addon.xml << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<addon id="repository.djrenzo" version="1.0.0" name="DJRenzo Repository" provider-name="djrenzo">
+  <extension point="xbmc.addon.repository" name="DJRenzo Repository">
+    <info compressed="false">${REPO_URL}/addons.xml</info>
+    <checksum>${REPO_URL}/addons.xml.md5</checksum>
+    <datadir zip="true">${REPO_URL}/</datadir>
+  </extension>
+  <extension point="xbmc.addon.metadata">
+    <summary>DJRenzo Kodi Repository</summary>
+    <description>Personal Kodi repository by DJRenzo</description>
+    <platform>all</platform>
+  </extension>
+</addon>
+EOF
+
+          # Zip it and place in gh-pages root
+          cd /tmp
+          zip -r "$GH_PAGES/repository.djrenzo-1.0.0.zip" repository.djrenzo/
+          rm -rf /tmp/repository.djrenzo
+
       - name: Create index.html for the repo page
         run: |
           GH_PAGES="${{ github.workspace }}/../gh-pages"
@@ -117,13 +146,20 @@ jobs:
             <style>
               body { font-family: sans-serif; max-width: 700px; margin: 40px auto; padding: 0 20px; }
               code { background: #f4f4f4; padding: 4px 8px; border-radius: 4px; word-break: break-all; }
+              ol { line-height: 2; }
             </style>
           </head>
           <body>
             <h1>${REPO_NAME} Kodi Repository</h1>
-            <p>Add this URL to Kodi under <strong>File Manager → Add Source</strong>:</p>
-            <p><code>${REPO_URL}</code></p>
-            <p>Then install the repository zip from <strong>Add-ons → Install from zip file</strong>.</p>
+            <h2>How to install</h2>
+            <ol>
+              <li>In Kodi, go to <strong>Settings → System → Add-ons</strong> and enable <strong>Unknown sources</strong></li>
+              <li>Go to <strong>Settings → File Manager → Add Source</strong></li>
+              <li>Enter this URL: <code>${REPO_URL}</code> and give it a name</li>
+              <li>Go to <strong>Add-ons → Install from zip file</strong>, select the source you just added</li>
+              <li>Install <code>repository.djrenzo-1.0.0.zip</code></li>
+              <li>Go to <strong>Add-ons → Install from repository → DJRenzo Repository</strong> and install your addons</li>
+            </ol>
           </body>
           </html>
           HTML
