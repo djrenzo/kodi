@@ -73,7 +73,7 @@ jobs:
               cp "${ADDON_DIR}addon.xml" "$GH_PAGES/$ADDON_ID/addon.xml"
               [ -f "${ADDON_DIR}icon.png" ]   && cp "${ADDON_DIR}icon.png"   "$GH_PAGES/$ADDON_ID/icon.png"
               [ -f "${ADDON_DIR}fanart.jpg" ] && cp "${ADDON_DIR}fanart.jpg" "$GH_PAGES/$ADDON_ID/fanart.jpg"
-              grep -v '<?xml' "${ADDON_DIR}addon.xml" >> addons.xml
+              # grep -v '<?xml' "${ADDON_DIR}addon.xml" >> addons.xml
               continue
             fi
 
