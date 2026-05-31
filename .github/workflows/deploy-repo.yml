@@ -88,69 +88,71 @@ jobs:
           mv addons.xml "$GH_PAGES/addons.xml"
           mv addons.xml.md5 "$GH_PAGES/addons.xml.md5"
 
+      - name: Write Python generator script
+        run: |
+          cat > /tmp/gen_repo.py << 'PYEOF'
+          import os, zipfile
+
+          owner = os.environ["REPO_OWNER"].lower()
+          repo  = os.environ["REPO_NAME"]
+          pages = os.environ["GH_PAGES_PATH"]
+          url   = "https://{}.github.io/{}".format(owner, repo)
+
+          addon_xml = (
+              '<?xml version="1.0" encoding="UTF-8"?>\n'
+              '<addon id="repository.djrenzo" version="1.0.0" name="DJRenzo Repository" provider-name="djrenzo">\n'
+              '  <extension point="xbmc.addon.repository" name="DJRenzo Repository">\n'
+              '    <info compressed="false">' + url + '/addons.xml</info>\n'
+              '    <checksum>' + url + '/addons.xml.md5</checksum>\n'
+              '    <datadir zip="true">' + url + '/</datadir>\n'
+              '  </extension>\n'
+              '  <extension point="xbmc.addon.metadata">\n'
+              '    <summary>DJRenzo Kodi Repository</summary>\n'
+              '    <description>Personal Kodi repository by DJRenzo</description>\n'
+              '    <platform>all</platform>\n'
+              '  </extension>\n'
+              '</addon>'
+          )
+
+          zip_path = os.path.join(pages, "repository.djrenzo-1.0.0.zip")
+          with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+              z.writestr("repository.djrenzo/addon.xml", addon_xml)
+
+          index_html = (
+              '<!DOCTYPE html>\n'
+              '<html lang="en">\n'
+              '<head>\n'
+              '  <meta charset="UTF-8">\n'
+              '  <title>DJRenzo Kodi Repo</title>\n'
+              '  <style>body{font-family:sans-serif;max-width:700px;margin:40px auto;padding:0 20px}'
+              'code{background:#f4f4f4;padding:4px 8px;border-radius:4px;word-break:break-all}'
+              'ol{line-height:2}</style>\n'
+              '</head>\n'
+              '<body>\n'
+              '  <h1>DJRenzo Kodi Repository</h1>\n'
+              '  <h2>How to install</h2>\n'
+              '  <ol>\n'
+              '    <li>Settings &rarr; System &rarr; Add-ons &rarr; enable <strong>Unknown sources</strong></li>\n'
+              '    <li>Settings &rarr; File Manager &rarr; Add Source &rarr; enter <code>' + url + '</code></li>\n'
+              '    <li>Add-ons &rarr; Install from zip file &rarr; select source &rarr; install <code>repository.djrenzo-1.0.0.zip</code></li>\n'
+              '    <li>Add-ons &rarr; Install from repository &rarr; DJRenzo Repository</li>\n'
+              '  </ol>\n'
+              '</body>\n'
+              '</html>'
+          )
+
+          with open(os.path.join(pages, "index.html"), "w") as f:
+              f.write(index_html)
+
+          print("Done: generated zip and index.html")
+          PYEOF
+
       - name: Generate repository installer zip and index.html
         env:
           REPO_OWNER: ${{ github.repository_owner }}
           REPO_NAME: ${{ github.event.repository.name }}
           GH_PAGES_PATH: ${{ github.workspace }}/../gh-pages
-        run: |
-          python3 - << 'EOF'
-import os, zipfile
-
-owner = os.environ["REPO_OWNER"].lower()
-repo  = os.environ["REPO_NAME"]
-pages = os.environ["GH_PAGES_PATH"]
-url   = f"https://{owner}.github.io/{repo}"
-
-addon_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<addon id="repository.djrenzo" version="1.0.0" name="DJRenzo Repository" provider-name="djrenzo">
-  <extension point="xbmc.addon.repository" name="DJRenzo Repository">
-    <info compressed="false">{url}/addons.xml</info>
-    <checksum>{url}/addons.xml.md5</checksum>
-    <datadir zip="true">{url}/</datadir>
-  </extension>
-  <extension point="xbmc.addon.metadata">
-    <summary>DJRenzo Kodi Repository</summary>
-    <description>Personal Kodi repository by DJRenzo</description>
-    <platform>all</platform>
-  </extension>
-</addon>"""
-
-zip_path = os.path.join(pages, "repository.djrenzo-1.0.0.zip")
-with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
-    z.writestr("repository.djrenzo/addon.xml", addon_xml)
-
-index_html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DJRenzo Kodi Repo</title>
-  <style>
-    body {{ font-family: sans-serif; max-width: 700px; margin: 40px auto; padding: 0 20px; }}
-    code {{ background: #f4f4f4; padding: 4px 8px; border-radius: 4px; word-break: break-all; }}
-    ol {{ line-height: 2; }}
-  </style>
-</head>
-<body>
-  <h1>DJRenzo Kodi Repository</h1>
-  <h2>How to install</h2>
-  <ol>
-    <li>In Kodi go to <strong>Settings &rarr; System &rarr; Add-ons</strong> and enable <strong>Unknown sources</strong></li>
-    <li>Go to <strong>Settings &rarr; File Manager &rarr; Add Source</strong></li>
-    <li>Enter this URL: <code>{url}</code> and give it a name</li>
-    <li>Go to <strong>Add-ons &rarr; Install from zip file</strong>, select the source you just added</li>
-    <li>Install <code>repository.djrenzo-1.0.0.zip</code></li>
-    <li>Go to <strong>Add-ons &rarr; Install from repository &rarr; DJRenzo Repository</strong> and install your addons</li>
-  </ol>
-</body>
-</html>"""
-
-with open(os.path.join(pages, "index.html"), "w") as f:
-    f.write(index_html)
-
-print("Generated repository.djrenzo-1.0.0.zip and index.html")
-EOF
+        run: python3 /tmp/gen_repo.py
 
       - name: Commit and push gh-pages
         run: |
