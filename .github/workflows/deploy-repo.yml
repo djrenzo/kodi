@@ -104,26 +104,30 @@ jobs:
       - name: Generate repository installer zip
         run: |
           GH_PAGES="${{ github.workspace }}/../gh-pages"
-          REPO_URL="https://$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]').github.io/$(basename '${{ github.repository }}')"
+          export REPO_URL="https://$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]').github.io/$(basename '${{ github.repository }}')"
 
           # Create the repository addon folder
           mkdir -p /tmp/repository.djrenzo
 
-          cat > /tmp/repository.djrenzo/addon.xml << EOF
-<?xml version="1.0" encoding="UTF-8"?>
+          python3 << 'PYEOF'
+import os
+repo_url = os.environ["REPO_URL"]
+content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <addon id="repository.djrenzo" version="1.0.0" name="DJRenzo Repository" provider-name="djrenzo">
   <extension point="xbmc.addon.repository" name="DJRenzo Repository">
-    <info compressed="false">${REPO_URL}/addons.xml</info>
-    <checksum>${REPO_URL}/addons.xml.md5</checksum>
-    <datadir zip="true">${REPO_URL}/</datadir>
+    <info compressed="false">{repo_url}/addons.xml</info>
+    <checksum>{repo_url}/addons.xml.md5</checksum>
+    <datadir zip="true">{repo_url}/</datadir>
   </extension>
   <extension point="xbmc.addon.metadata">
     <summary>DJRenzo Kodi Repository</summary>
     <description>Personal Kodi repository by DJRenzo</description>
     <platform>all</platform>
   </extension>
-</addon>
-EOF
+</addon>"""
+with open("/tmp/repository.djrenzo/addon.xml", "w") as f:
+    f.write(content)
+PYEOF
 
           # Zip it and place in gh-pages root
           cd /tmp
