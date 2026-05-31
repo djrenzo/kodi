@@ -27,7 +27,7 @@
 </addon>
 <addon
 	id="plugin.video.miteledidi"
-  version="1.4"
+  version="1.4.1"
   name="[B][COLOR white]mitele[COLOR cornflowerblue] didi[/COLOR][/B]"
   provider-name="equipo tvdidi">
 
