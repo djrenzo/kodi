@@ -17,8 +17,7 @@ jobs:
     steps:
       - name: Skip if build workflow failed
         if: github.event.workflow_run.conclusion == 'failure'
-        run: |
-          echo "Build workflow failed, skipping deploy." && exit 0
+        run: echo "Build workflow failed, skipping deploy." && exit 0
 
       - name: Checkout main
         uses: actions/checkout@v4
@@ -49,26 +48,22 @@ jobs:
           REPO="${{ github.repository }}"
           GH_PAGES="${{ github.workspace }}/../gh-pages"
 
-          # Start addons.xml
           echo '<?xml version="1.0" encoding="UTF-8"?>' > addons.xml
           echo '<addons>' >> addons.xml
 
-          # Loop over every addon folder in main/addons/
           for ADDON_DIR in main/addons/*/; do
-            ADDON_ID=$(python3 -c "import xml.etree.ElementTree as ET; t=ET.parse('${ADDON_DIR}addon.xml'); print(t.getroot().get('id'))")
-
             if [ ! -f "${ADDON_DIR}addon.xml" ]; then
-              echo "Skipping $ADDON_ID: no addon.xml found."
+              echo "Skipping $(basename $ADDON_DIR): no addon.xml found."
               continue
             fi
 
+            ADDON_ID=$(python3 -c "import xml.etree.ElementTree as ET; t=ET.parse('${ADDON_DIR}addon.xml'); print(t.getroot().get('id'))")
             VERSION=$(python3 -c "import xml.etree.ElementTree as ET; t=ET.parse('${ADDON_DIR}addon.xml'); print(t.getroot().get('version'))")
             ZIP_NAME="${ADDON_ID}-${VERSION}.zip"
             TAG="${ADDON_ID}-v${VERSION}"
 
             echo "Processing $ADDON_ID v$VERSION..."
 
-            # Fetch release asset info from GitHub API
             RELEASE_DATA=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
               "https://api.github.com/repos/$REPO/releases/tags/$TAG")
 
@@ -79,45 +74,40 @@ jobs:
               continue
             fi
 
-            # Download the zip into the gh-pages folder under the addon's own subfolder
             mkdir -p "$GH_PAGES/$ADDON_ID"
             curl -sL "$DOWNLOAD_URL" -o "$GH_PAGES/$ADDON_ID/$ZIP_NAME"
-
-            # Copy addon.xml and icon/fanart if present
             cp "${ADDON_DIR}addon.xml" "$GH_PAGES/$ADDON_ID/addon.xml"
             [ -f "${ADDON_DIR}icon.png" ]   && cp "${ADDON_DIR}icon.png"   "$GH_PAGES/$ADDON_ID/icon.png"
             [ -f "${ADDON_DIR}fanart.jpg" ] && cp "${ADDON_DIR}fanart.jpg" "$GH_PAGES/$ADDON_ID/fanart.jpg"
 
-            # Append this addon's addon.xml content (inner block only) to addons.xml
             grep -v '<?xml' "${ADDON_DIR}addon.xml" >> addons.xml
           done
 
           echo '</addons>' >> addons.xml
-
-          # Generate MD5 checksum
           md5sum addons.xml | cut -d' ' -f1 > addons.xml.md5
-
-          # Move addons.xml and checksum into gh-pages root
           mv addons.xml "$GH_PAGES/addons.xml"
           mv addons.xml.md5 "$GH_PAGES/addons.xml.md5"
 
-      - name: Generate repository installer zip
+      - name: Generate repository installer zip and index.html
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          GH_PAGES_PATH: ${{ github.workspace }}/../gh-pages
         run: |
-          GH_PAGES="${{ github.workspace }}/../gh-pages"
-          export REPO_URL="https://$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]').github.io/$(basename '${{ github.repository }}')"
+          python3 - << 'EOF'
+import os, zipfile
 
-          # Create the repository addon folder
-          mkdir -p /tmp/repository.djrenzo
+owner = os.environ["REPO_OWNER"].lower()
+repo  = os.environ["REPO_NAME"]
+pages = os.environ["GH_PAGES_PATH"]
+url   = f"https://{owner}.github.io/{repo}"
 
-          python3 << 'PYEOF'
-import os
-repo_url = os.environ["REPO_URL"]
-content = f"""<?xml version="1.0" encoding="UTF-8"?>
+addon_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <addon id="repository.djrenzo" version="1.0.0" name="DJRenzo Repository" provider-name="djrenzo">
   <extension point="xbmc.addon.repository" name="DJRenzo Repository">
-    <info compressed="false">{repo_url}/addons.xml</info>
-    <checksum>{repo_url}/addons.xml.md5</checksum>
-    <datadir zip="true">{repo_url}/</datadir>
+    <info compressed="false">{url}/addons.xml</info>
+    <checksum>{url}/addons.xml.md5</checksum>
+    <datadir zip="true">{url}/</datadir>
   </extension>
   <extension point="xbmc.addon.metadata">
     <summary>DJRenzo Kodi Repository</summary>
@@ -125,48 +115,42 @@ content = f"""<?xml version="1.0" encoding="UTF-8"?>
     <platform>all</platform>
   </extension>
 </addon>"""
-with open("/tmp/repository.djrenzo/addon.xml", "w") as f:
-    f.write(content)
-PYEOF
 
-          # Zip it and place in gh-pages root
-          cd /tmp
-          zip -r "$GH_PAGES/repository.djrenzo-1.0.0.zip" repository.djrenzo/
-          rm -rf /tmp/repository.djrenzo
+zip_path = os.path.join(pages, "repository.djrenzo-1.0.0.zip")
+with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+    z.writestr("repository.djrenzo/addon.xml", addon_xml)
 
-      - name: Create index.html for the repo page
-        run: |
-          GH_PAGES="${{ github.workspace }}/../gh-pages"
-          REPO_NAME=$(basename "${{ github.repository }}")
-          REPO_URL="https://$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]').github.io/$(basename '${{ github.repository }}')"
+index_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DJRenzo Kodi Repo</title>
+  <style>
+    body {{ font-family: sans-serif; max-width: 700px; margin: 40px auto; padding: 0 20px; }}
+    code {{ background: #f4f4f4; padding: 4px 8px; border-radius: 4px; word-break: break-all; }}
+    ol {{ line-height: 2; }}
+  </style>
+</head>
+<body>
+  <h1>DJRenzo Kodi Repository</h1>
+  <h2>How to install</h2>
+  <ol>
+    <li>In Kodi go to <strong>Settings &rarr; System &rarr; Add-ons</strong> and enable <strong>Unknown sources</strong></li>
+    <li>Go to <strong>Settings &rarr; File Manager &rarr; Add Source</strong></li>
+    <li>Enter this URL: <code>{url}</code> and give it a name</li>
+    <li>Go to <strong>Add-ons &rarr; Install from zip file</strong>, select the source you just added</li>
+    <li>Install <code>repository.djrenzo-1.0.0.zip</code></li>
+    <li>Go to <strong>Add-ons &rarr; Install from repository &rarr; DJRenzo Repository</strong> and install your addons</li>
+  </ol>
+</body>
+</html>"""
 
-          cat > "$GH_PAGES/index.html" << HTML
-          <!DOCTYPE html>
-          <html lang="en">
-          <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>${REPO_NAME} Kodi Repo</title>
-            <style>
-              body { font-family: sans-serif; max-width: 700px; margin: 40px auto; padding: 0 20px; }
-              code { background: #f4f4f4; padding: 4px 8px; border-radius: 4px; word-break: break-all; }
-              ol { line-height: 2; }
-            </style>
-          </head>
-          <body>
-            <h1>${REPO_NAME} Kodi Repository</h1>
-            <h2>How to install</h2>
-            <ol>
-              <li>In Kodi, go to <strong>Settings → System → Add-ons</strong> and enable <strong>Unknown sources</strong></li>
-              <li>Go to <strong>Settings → File Manager → Add Source</strong></li>
-              <li>Enter this URL: <code>${REPO_URL}</code> and give it a name</li>
-              <li>Go to <strong>Add-ons → Install from zip file</strong>, select the source you just added</li>
-              <li>Install <code>repository.djrenzo-1.0.0.zip</code></li>
-              <li>Go to <strong>Add-ons → Install from repository → DJRenzo Repository</strong> and install your addons</li>
-            </ol>
-          </body>
-          </html>
-          HTML
+with open(os.path.join(pages, "index.html"), "w") as f:
+    f.write(index_html)
+
+print("Generated repository.djrenzo-1.0.0.zip and index.html")
+EOF
 
       - name: Commit and push gh-pages
         run: |
