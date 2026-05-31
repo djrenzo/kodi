@@ -1,6 +1,9 @@
 name: Deploy Kodi Repo to GitHub Pages
 
 on:
+  workflow_run:
+    workflows: ["Build Kodi Addon"]
+    types: [completed]
   release:
     types: [published]
   workflow_dispatch:
@@ -12,6 +15,11 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Skip if build workflow failed
+        if: github.event.workflow_run.conclusion == 'failure'
+        run: |
+          echo "Build workflow failed, skipping deploy." && exit 0
+
       - name: Checkout main
         uses: actions/checkout@v4
         with:
@@ -47,14 +55,14 @@ jobs:
 
           # Loop over every addon folder in main/addons/
           for ADDON_DIR in main/addons/*/; do
-            ADDON_ID=$(xmllint --xpath 'string(/addon/@id)' "${ADDON_DIR}addon.xml")
+            ADDON_ID=$(python3 -c "import xml.etree.ElementTree as ET; t=ET.parse('${ADDON_DIR}addon.xml'); print(t.getroot().get('id'))")
 
             if [ ! -f "${ADDON_DIR}addon.xml" ]; then
               echo "Skipping $ADDON_ID: no addon.xml found."
               continue
             fi
 
-            VERSION=$(xmllint --xpath 'string(/addon/@version)' "${ADDON_DIR}addon.xml")
+            VERSION=$(python3 -c "import xml.etree.ElementTree as ET; t=ET.parse('${ADDON_DIR}addon.xml'); print(t.getroot().get('version'))")
             ZIP_NAME="${ADDON_ID}-${VERSION}.zip"
             TAG="${ADDON_ID}-v${VERSION}"
 
