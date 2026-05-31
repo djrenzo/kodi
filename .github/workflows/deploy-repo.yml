@@ -25,9 +25,12 @@ jobs:
             git worktree add ../gh-pages gh-pages
           else
             echo "gh-pages branch not found, creating it fresh."
-            git worktree add ../gh-pages --orphan gh-pages
+            mkdir -p ../gh-pages
             cd ../gh-pages
+            git init
+            git checkout --orphan gh-pages
             git commit --allow-empty -m "Initial gh-pages commit"
+            git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
           fi
 
       - name: Fetch all addon releases and build addons.xml
@@ -124,5 +127,5 @@ jobs:
             echo "No changes to deploy."
           else
             git commit -m "Deploy Kodi repo: updated addons.xml and zips"
-            git push origin gh-pages
+            git push --set-upstream origin gh-pages
           fi
