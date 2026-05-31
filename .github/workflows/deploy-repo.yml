@@ -64,6 +64,19 @@ jobs:
 
             echo "Processing $ADDON_ID v$VERSION..."
 
+            # repository.djrenzo is not a released addon — zip it directly from source
+            if [ "$ADDON_ID" == "repository.djrenzo" ]; then
+              mkdir -p "$GH_PAGES/$ADDON_ID"
+              cd main/addons
+              zip -r "$GH_PAGES/${ADDON_ID}-${VERSION}.zip" "$ADDON_ID/"
+              cd "${{ github.workspace }}"
+              cp "${ADDON_DIR}addon.xml" "$GH_PAGES/$ADDON_ID/addon.xml"
+              [ -f "${ADDON_DIR}icon.png" ]   && cp "${ADDON_DIR}icon.png"   "$GH_PAGES/$ADDON_ID/icon.png"
+              [ -f "${ADDON_DIR}fanart.jpg" ] && cp "${ADDON_DIR}fanart.jpg" "$GH_PAGES/$ADDON_ID/fanart.jpg"
+              grep -v '<?xml' "${ADDON_DIR}addon.xml" >> addons.xml
+              continue
+            fi
+
             RELEASE_DATA=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
               "https://api.github.com/repos/$REPO/releases/tags/$TAG")
 
@@ -88,63 +101,21 @@ jobs:
           mv addons.xml "$GH_PAGES/addons.xml"
           mv addons.xml.md5 "$GH_PAGES/addons.xml.md5"
 
-      - name: Write Python generator script
+      - name: Generate index.html
         run: |
-          cat > /tmp/gen_repo.py << 'PYEOF'
-          import os, zipfile
-
-          owner = os.environ["REPO_OWNER"].lower()
-          repo  = os.environ["REPO_NAME"]
-          pages = os.environ["GH_PAGES_PATH"]
-          url   = "https://{}.github.io/{}".format(owner, repo)
-
-          addon_xml = (
-              '<?xml version="1.0" encoding="UTF-8"?>\n'
-              '<addon id="repository.djrenzo" version="1.0.0" name="DJRenzo Repository" provider-name="djrenzo">\n'
-              '  <extension point="xbmc.addon.repository" name="DJRenzo Repository">\n'
-              '    <dir>\n'
-              '      <info compressed="false">https://raw.githubusercontent.com/' + owner + '/' + repo + '/gh-pages/addons.xml</info>\n'
-              '      <checksum>https://raw.githubusercontent.com/' + owner + '/' + repo + '/gh-pages/addons.xml.md5</checksum>\n'
-              '      <datadir zip="true">https://raw.githubusercontent.com/' + owner + '/' + repo + '/gh-pages/</datadir>\n'
-              '    </dir>\n'
-              '  </extension>\n'
-              '  <extension point="xbmc.addon.metadata">\n'
-              '    <summary>DJRenzo Kodi Repository</summary>\n'
-              '    <description>Personal Kodi repository by DJRenzo</description>\n'
-              '    <platform>all</platform>\n'
-              '  </extension>\n'
-              '</addon>'
-          )
-
-          zip_path = os.path.join(pages, "repository.djrenzo-1.0.0.zip")
-          with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
-              z.writestr("repository.djrenzo/addon.xml", addon_xml)
-
-          index_html = (
-              '<!DOCTYPE html>\n'
-              '<html lang="en">\n'
-              '<head>\n'
-              '  <meta charset="UTF-8">\n'
-              '  <title>DJRenzo Kodi Repo</title>\n'
-              '</head>\n'
-              '<body>\n'
-              '  <a href="repository.djrenzo-1.0.0.zip">repository.djrenzo-1.0.0.zip</a>\n'
-              '</body>\n'
-              '</html>'
-          )
-
-          with open(os.path.join(pages, "index.html"), "w") as f:
-              f.write(index_html)
-
-          print("Done: generated zip and index.html")
-          PYEOF
-
-      - name: Generate repository installer zip and index.html
-        env:
-          REPO_OWNER: ${{ github.repository_owner }}
-          REPO_NAME: ${{ github.event.repository.name }}
-          GH_PAGES_PATH: ${{ github.workspace }}/../gh-pages
-        run: python3 /tmp/gen_repo.py
+          GH_PAGES="${{ github.workspace }}/../gh-pages"
+          cat > "$GH_PAGES/index.html" << 'HTML'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <title>DJRenzo Kodi Repo</title>
+          </head>
+          <body>
+            <a href="repository.djrenzo-1.0.0.zip">repository.djrenzo-1.0.0.zip</a>
+          </body>
+          </html>
+          HTML
 
       - name: Commit and push gh-pages
         run: |
