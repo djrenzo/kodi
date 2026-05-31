@@ -1,0 +1,107 @@
+name: Build Kodi Addon
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'addons/**'
+  workflow_dispatch:
+    inputs:
+      addon_id:
+        description: "Addon folder name to build (e.g. plugin.video.myaddon)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      addons: ${{ steps.changed.outputs.addons }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed addons (push) or use input (manual)
+        id: changed
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "addons=[\"${{ inputs.addon_id }}\"]" >> $GITHUB_OUTPUT
+          else
+            # Find which addon folders changed
+            CHANGED=$(git diff --name-only HEAD~1 HEAD | grep '^addons/' | cut -d'/' -f2 | sort -u)
+            if [ -z "$CHANGED" ]; then
+              echo "addons=[]" >> $GITHUB_OUTPUT
+            else
+              JSON=$(echo "$CHANGED" | jq -R . | jq -sc .)
+              echo "addons=$JSON" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+  build:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.addons != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        addon: ${{ fromJson(needs.detect-changes.outputs.addons) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read addon metadata
+        id: meta
+        run: |
+          ADDON_DIR="addons/${{ matrix.addon }}"
+
+          if [ ! -f "$ADDON_DIR/addon.xml" ]; then
+            echo "::error::addon.xml not found in $ADDON_DIR"
+            exit 1
+          fi
+
+          VERSION=$(grep -oP 'version="\K[^"]+' "$ADDON_DIR/addon.xml" | head -n 1)
+          ADDON_ID=$(grep -oP 'id="\K[^"]+' "$ADDON_DIR/addon.xml" | head -n 1)
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "addon_id=$ADDON_ID" >> $GITHUB_OUTPUT
+          echo "zip_name=${ADDON_ID}-${VERSION}.zip" >> $GITHUB_OUTPUT
+
+      - name: Package addon into zip
+        run: |
+          ADDON_DIR="addons/${{ matrix.addon }}"
+          ZIP_NAME="${{ steps.meta.outputs.zip_name }}"
+
+          # Zip the addon folder, preserving the folder name as required by Kodi
+          cd addons
+          zip -r "../$ZIP_NAME" "${{ matrix.addon }}/" \
+            --exclude "*/.git/*" \
+            --exclude "*/__pycache__/*" \
+            --exclude "*/.DS_Store"
+
+      - name: Create and push tag
+        run: |
+          TAG="${{ steps.meta.outputs.addon_id }}-v${{ steps.meta.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Delete tag if it already exists (re-build of same version)
+          git tag -d "$TAG" 2>/dev/null || true
+          git push origin ":refs/tags/$TAG" 2>/dev/null || true
+          git tag "$TAG"
+          git push origin "$TAG"
+
+      - name: Upload to GitHub Releases
+        uses: softprops/action-gh-release@v2.0.1
+        with:
+          tag_name: ${{ steps.meta.outputs.addon_id }}-v${{ steps.meta.outputs.version }}
+          name: ${{ steps.meta.outputs.addon_id }} v${{ steps.meta.outputs.version }}
+          files: ${{ steps.meta.outputs.zip_name }}
+          draft: false
+          prerelease: false
+
+      - name: Output Release URL
+        run: |
+          echo "::notice::Release available at: https://github.com/${{ github.repository }}/releases"

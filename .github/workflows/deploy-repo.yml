@@ -1,0 +1,128 @@
+name: Deploy Kodi Repo to GitHub Pages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          path: main
+
+      - name: Checkout or create gh-pages branch
+        run: |
+          cd main
+          if git ls-remote --heads origin gh-pages | grep -q gh-pages; then
+            git fetch origin gh-pages
+            git worktree add ../gh-pages gh-pages
+          else
+            echo "gh-pages branch not found, creating it fresh."
+            git worktree add ../gh-pages --orphan gh-pages
+            cd ../gh-pages
+            git commit --allow-empty -m "Initial gh-pages commit"
+          fi
+
+      - name: Fetch all addon releases and build addons.xml
+        run: |
+          REPO="${{ github.repository }}"
+          GH_PAGES="../gh-pages"
+
+          # Start addons.xml
+          echo '<?xml version="1.0" encoding="UTF-8"?>' > addons.xml
+          echo '<addons>' >> addons.xml
+
+          # Loop over every addon folder in main/addons/
+          for ADDON_DIR in main/addons/*/; do
+            ADDON_ID=$(basename "$ADDON_DIR")
+
+            if [ ! -f "${ADDON_DIR}addon.xml" ]; then
+              echo "Skipping $ADDON_ID: no addon.xml found."
+              continue
+            fi
+
+            VERSION=$(grep -oP 'version="\K[^"]+' "${ADDON_DIR}addon.xml" | head -n 1)
+            ZIP_NAME="${ADDON_ID}-${VERSION}.zip"
+            TAG="${ADDON_ID}-v${VERSION}"
+
+            echo "Processing $ADDON_ID v$VERSION..."
+
+            # Fetch release asset info from GitHub API
+            RELEASE_DATA=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/$REPO/releases/tags/$TAG")
+
+            DOWNLOAD_URL=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name | endswith(".zip")) | .browser_download_url' | head -n 1)
+
+            if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" == "null" ]; then
+              echo "Warning: No release found for $TAG, skipping."
+              continue
+            fi
+
+            # Download the zip into the gh-pages folder under the addon's own subfolder
+            mkdir -p "$GH_PAGES/$ADDON_ID"
+            curl -sL "$DOWNLOAD_URL" -o "$GH_PAGES/$ADDON_ID/$ZIP_NAME"
+
+            # Copy addon.xml and icon/fanart if present
+            cp "${ADDON_DIR}addon.xml" "$GH_PAGES/$ADDON_ID/addon.xml"
+            [ -f "${ADDON_DIR}icon.png" ]   && cp "${ADDON_DIR}icon.png"   "$GH_PAGES/$ADDON_ID/icon.png"
+            [ -f "${ADDON_DIR}fanart.jpg" ] && cp "${ADDON_DIR}fanart.jpg" "$GH_PAGES/$ADDON_ID/fanart.jpg"
+
+            # Append this addon's addon.xml content (inner block only) to addons.xml
+            grep -v '<?xml' "${ADDON_DIR}addon.xml" >> addons.xml
+          done
+
+          echo '</addons>' >> addons.xml
+
+          # Generate MD5 checksum
+          md5sum addons.xml | cut -d' ' -f1 > addons.xml.md5
+
+          # Move addons.xml and checksum into gh-pages root
+          mv addons.xml "$GH_PAGES/addons.xml"
+          mv addons.xml.md5 "$GH_PAGES/addons.xml.md5"
+
+      - name: Create index.html for the repo page
+        run: |
+          GH_PAGES="../gh-pages"
+          REPO_NAME=$(basename "${{ github.repository }}")
+          REPO_URL="https://$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]').github.io/$(basename '${{ github.repository }}')"
+
+          cat > "$GH_PAGES/index.html" << HTML
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>${REPO_NAME} Kodi Repo</title>
+            <style>
+              body { font-family: sans-serif; max-width: 700px; margin: 40px auto; padding: 0 20px; }
+              code { background: #f4f4f4; padding: 4px 8px; border-radius: 4px; word-break: break-all; }
+            </style>
+          </head>
+          <body>
+            <h1>${REPO_NAME} Kodi Repository</h1>
+            <p>Add this URL to Kodi under <strong>File Manager → Add Source</strong>:</p>
+            <p><code>${REPO_URL}</code></p>
+            <p>Then install the repository zip from <strong>Add-ons → Install from zip file</strong>.</p>
+          </body>
+          </html>
+          HTML
+
+      - name: Commit and push gh-pages
+        run: |
+          cd ../gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes to deploy."
+          else
+            git commit -m "Deploy Kodi repo: updated addons.xml and zips"
+            git push origin gh-pages
+          fi

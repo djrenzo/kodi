@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<addon
+	id="plugin.video.miteledidi"
+  version="1.3"
+  name="[B][COLOR white]mitele[COLOR cornflowerblue] didi[/COLOR][/B]"
+  provider-name="equipo tvdidi">
+
+  <requires>
+    <import addon="script.module.requests" />
+    <import addon="script.module.six" />
+  </requires>
+	<extension point="xbmc.python.pluginsource" library="default.py">
+		<provides>video</provides>
+	</extension>
+	
+	<extension point="xbmc.addon.metadata">
+    <platform>all</platform>
+		<summary lang="en">miteledidi</summary>
+		<summary lang="da">miteledidi</summary>
+		<description lang="en">[B][LOWERCASE][CAPITALIZE][COLOR white]For watching Mediaset[/COLOR][/CAPITALIZE][/LOWERCASE][/B]</description>
+    <disclaimer>[B][COLOR yellow]Made so my loml can watch la isla with me in the bed[/B][/COLOR]</disclaimer>
+		<website></website>
+		<license>GPL 2.0</license>
+		<platform>all</platform>
+    <assets>
+        <icon>icon.png</icon>
+        <fanart>fanart.png</fanart>
+    </assets>        
+		<language>es</language>
+	</extension>
+</addon>
