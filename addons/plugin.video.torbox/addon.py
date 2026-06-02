@@ -352,6 +352,7 @@ def list_accounts():
         li = xbmcgui.ListItem(label='[COLOR yellow]Add account via Phone[/COLOR]')
         xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'add_account', 'account': 1}), li, isFolder=False)
 
+    next_acc = 1
     for acc in accounts:
         # --- Browse entry (file browser) ---
         li = xbmcgui.ListItem(label='[B]{} — Browse[/B]'.format(acc['name']))
@@ -393,8 +394,8 @@ def list_accounts():
             li,
             isFolder=False
         )
+        next_acc = int(acc["index"]) + 1
 
-    next_acc = int(acc["index"]) + 1
     if next_acc <= MAX_ACCOUNTS:
         li = xbmcgui.ListItem(label=f'[COLOR springgreen]Add account {next_acc} via Phone[/COLOR]')
         xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'add_account', 'account': next_acc}), li, isFolder=False)
