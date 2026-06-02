@@ -686,7 +686,6 @@ import time
 server = None
 server_account_id = None
 _qr_window = None
-_qr_control = None
 
 class ConfigHandler(BaseHTTPRequestHandler):
 
@@ -742,16 +741,7 @@ class ConfigHandler(BaseHTTPRequestHandler):
             daemon=True
         ).start()
 
-        global _qr_window, _qr_control
-
-        try:
-            if _qr_window and _qr_control:
-                _qr_window.removeControl(_qr_control)
-        except Exception:
-            pass
-
-        _qr_window = None
-        _qr_control = None
+        _qr_window.close()
 
 def start_setup_server(account_id):
     global server
@@ -807,29 +797,73 @@ def get_local_ip():
     finally:
         s.close()
 
-def show_qr(ip):
-    url = f"http://{ip}:8765"
+# def show_qr(ip):
+#     url = f"http://{ip}:8765"
 
-    # QR code generated via public API
-    qr_url = (
-        "https://api.qrserver.com/v1/create-qr-code/"
-        f"?size=400x400&data={url}&t={int(time.time())}"
-    )
+#     # QR code generated via public API
+#     qr_url = (
+#         "https://api.qrserver.com/v1/create-qr-code/"
+#         f"?size=400x400&data={url}&t={int(time.time())}"
+#     )
 
-    # Create image control
-    control = xbmcgui.ControlImage(
-        200,   # x
-        100,   # y
-        400,   # width
-        400,   # height
-        qr_url
-    )
+#     # Create image control
+#     control = xbmcgui.ControlImage(
+#         200,   # x
+#         100,   # y
+#         400,   # width
+#         400,   # height
+#         qr_url
+#     )
 
-    # Add to Kodi window
-    window = xbmcgui.Window(10000)  # Default window
-    window.addControl(control)
+#     # Add to Kodi window
+#     window = xbmcgui.Window(10000)  # Default window
+#     window.addControl(control)
 
-    return window, control
+#     return window, control
+
+class QRDialog(xbmcgui.WindowDialog):
+
+    def __init__(self, ip):
+        super().__init__()
+
+        url = f"http://{ip}:8765"
+
+        qr_url = (
+            "https://api.qrserver.com/v1/create-qr-code/"
+            f"?size=400x400&data={url}&t={int(time.time())}"
+        )
+
+        # Background
+        self.background = xbmcgui.ControlImage(
+            100, 50, 600, 500,
+            "special://skin/extras/dialog_bg.png"  # optional
+        )
+
+        # QR image
+        self.qr = xbmcgui.ControlImage(
+            200, 75, 400, 400,
+            qr_url
+        )
+
+        # Instructions
+        self.label = xbmcgui.ControlLabel(
+            150, 490, 500, 30,
+            "Scan with your phone to add your account",
+            alignment=2  # centered
+        )
+
+        self.addControl(self.qr)
+        self.addControl(self.label)
+
+    def onAction(self, action):
+        action_id = action.getId()
+
+        # Back / Escape / Previous Menu
+        if action_id in (
+            xbmcgui.ACTION_NAV_BACK,
+            xbmcgui.ACTION_PREVIOUS_MENU,
+        ):
+            self.close()
 
 def add_account(account_id):
     """Add account over phone"""
@@ -837,8 +871,15 @@ def add_account(account_id):
 
     ip = get_local_ip()
 
-    global _qr_window, _qr_control
-    _qr_window, _qr_control = show_qr(ip)
+    global _qr_window
+    dialog = QRDialog(ip)
+    _qr_window = dialog
+
+    dialog.doModal()
+
+    # Execution continues after dialog closes
+    del dialog
+    _qr_window = None
 
     # xbmcgui.Dialog().ok(
     #     f"Account {account_id} Setup",
