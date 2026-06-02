@@ -882,13 +882,13 @@ def export_library(account_index):
             if season is None:
                 continue
 
-            season_folder = os.path.join(
-                show_folder,
-                'Season {:02d}'.format(season)
-            )
+            # season_folder = os.path.join(
+            #     show_folder,
+            #     'Season {:02d}'.format(season)
+            # )
 
-            if not xbmcvfs.exists(season_folder):
-                xbmcvfs.mkdirs(season_folder)
+            # if not xbmcvfs.exists(season_folder):
+            #     xbmcvfs.mkdirs(season_folder)
 
             plugin_url = build_url({
                 'action': 'play',
@@ -903,7 +903,8 @@ def export_library(account_index):
             )
 
             strm_path = os.path.join(
-                season_folder,
+                # season_folder,
+                show_folder
                 strm_name
             )
 
