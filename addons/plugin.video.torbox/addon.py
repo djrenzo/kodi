@@ -172,19 +172,32 @@ def clean_show_name(raw_name):
     return s, year
 
 
+# def extract_episode_info(filename):
+#     """
+#     Extract season/episode numbers from a filename.
+#     Returns (season, episode) or (None, None).
+#     """
+#     # Standard SxxExx
+#     m = re.search(r'[Ss](\d{1,2})[Ee](\d{1,3})', filename)
+#     if m:
+#         return int(m.group(1)), int(m.group(2))
+#     # xXXeXX or 1x01 style
+#     m = re.search(r'(\d{1,2})[xX](\d{2,3})', filename)
+#     if m:
+#         return int(m.group(1)), int(m.group(2))
+#     return None, None
+
 def extract_episode_info(filename):
-    """
-    Extract season/episode numbers from a filename.
-    Returns (season, episode) or (None, None).
-    """
-    # Standard SxxExx
-    m = re.search(r'[Ss](\d{1,2})[Ee](\d{1,3})', filename)
-    if m:
-        return int(m.group(1)), int(m.group(2))
-    # xXXeXX or 1x01 style
-    m = re.search(r'(\d{1,2})[xX](\d{2,3})', filename)
-    if m:
-        return int(m.group(1)), int(m.group(2))
+    patterns = [
+        r'[Ss](\d{1,2})[.\-_ ]?[Ee](\d{1,3})',
+        r'(\d{1,2})[xX](\d{2,3})',
+    ]
+
+    for pattern in patterns:
+        m = re.search(pattern, filename)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+
     return None, None
 
 
@@ -740,12 +753,12 @@ def write_tvshow_nfo(show_folder, title, tvdb_id=None):
             )
         )
 
-    xml.append('</tvshow>')
+        xml.append('</tvshow>')
 
-    write_text_file(
-        os.path.join(show_folder, 'tvshow.nfo'),
-        '\n'.join(xml)
-    )
+        write_text_file(
+            os.path.join(show_folder, 'tvshow.nfo'),
+            '\n'.join(xml)
+        )
 
 
 def walk_webdav(account, remote_path):
