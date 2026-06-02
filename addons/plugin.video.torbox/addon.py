@@ -340,19 +340,8 @@ def get_params():
 
 def list_accounts():
     accounts = get_accounts()
-    if not accounts:
-        # xbmcgui.Dialog().ok(
-        #     'TorBox WebDAV',
-        #     'No accounts configured.\n\nOpen Settings and enter your TorBox credentials.'
-        # )
-        # ADDON.openSettings()
-        # return
-
-        # Overrides manager
-        li = xbmcgui.ListItem(label='[COLOR yellow]Add account via Phone[/COLOR]')
-        xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'add_account', 'account': 1}), li, isFolder=False)
-
     next_acc = 1
+    
     for acc in accounts:
         # --- Browse entry (file browser) ---
         li = xbmcgui.ListItem(label='[B]{} — Browse[/B]'.format(acc['name']))
