@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <addon id="plugin.video.torbox"
        name="TorBox WebDAV"
-       version="2.0.17"
+       version="2.0.18"
        provider-name="TorBox">
   <requires>
     <import addon="xbmc.python" version="3.0.0"/>
@@ -15,7 +15,7 @@
     <platform>all</platform>
     <license>MIT</license>
     <assets>
-        <icon>resources/media/icon.png</icon>
+        <icon>icon.png</icon>
     </assets>
   </extension>
 </addon>
