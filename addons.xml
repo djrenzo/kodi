@@ -57,7 +57,7 @@
 </addon>
 <addon id="plugin.video.torbox"
        name="TorBox WebDAV"
-       version="2.0.16"
+       version="2.0.17"
        provider-name="TorBox">
   <requires>
     <import addon="xbmc.python" version="3.0.0"/>
@@ -70,6 +70,9 @@
     <description lang="en_GB">Browse and play TorBox downloads via WebDAV. Supports multiple accounts, direct HTTP/2 playback, and full Kodi library integration with automatic metadata and artwork.</description>
     <platform>all</platform>
     <license>MIT</license>
+    <assets>
+        <icon>resources/media/icon.png</icon>
+    </assets>
   </extension>
 </addon>
 </addons>
