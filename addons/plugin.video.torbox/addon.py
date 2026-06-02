@@ -904,7 +904,7 @@ def export_library(account_index):
 
             strm_path = os.path.join(
                 # season_folder,
-                show_folder
+                show_folder,
                 strm_name
             )
 
