@@ -365,7 +365,7 @@ def list_accounts():
 
         # Overrides manager
         li = xbmcgui.ListItem(label='[COLOR yellow]Add account via Phone[/COLOR]')
-        xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'add_account'}), li, isFolder=False)
+        xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'add_account', 'account': 1}), li, isFolder=False)
 
     for acc in accounts:
         # --- Browse entry (file browser) ---
@@ -408,6 +408,10 @@ def list_accounts():
             li,
             isFolder=False
         )
+
+    next_acc = int(acc["index"]) + 1
+    li = xbmcgui.ListItem(label=f'[COLOR yellow]Add account {next_acc} via Phone[/COLOR]')
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'add_account', 'account': next_acc}), li, isFolder=False)
 
     # Overrides manager
     li = xbmcgui.ListItem(label='[COLOR yellow]✎ Manage show overrides[/COLOR]')
@@ -693,6 +697,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs
 
 server = None
+server_account_id = None
 
 class ConfigHandler(BaseHTTPRequestHandler):
 
@@ -700,7 +705,7 @@ class ConfigHandler(BaseHTTPRequestHandler):
         html = """
         <html>
         <body>
-            <h2>TorBox Setup</h2>
+            <h2>TorBox Setup {account}</h2>
 
             <form method="POST">
                 URL<br>
@@ -716,7 +721,7 @@ class ConfigHandler(BaseHTTPRequestHandler):
             </form>
         </body>
         </html>
-        """
+        """.format(account=server_account_id)
 
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
@@ -734,7 +739,7 @@ class ConfigHandler(BaseHTTPRequestHandler):
         username = form.get("username", [""])[0]
         password = form.get("password", [""])[0]
 
-        save_credentials(url, username, password)
+        save_credentials(server_account_id, url, username, password)
 
         self.send_response(200)
         self.end_headers()
@@ -748,8 +753,12 @@ class ConfigHandler(BaseHTTPRequestHandler):
             daemon=True
         ).start()
 
-def start_setup_server():
+def start_setup_server(account_id):
     global server
+    global server_account_id
+
+
+    server_account_id = account_id
 
     server = HTTPServer(
         ("0.0.0.0", 8765),
@@ -763,24 +772,24 @@ def start_setup_server():
 
     thread.start()
 
-def save_credentials(url, username, password):
+def save_credentials(account_id, url, username, password):
     ADDON.setSettingString(
-        "account1_url",
+        f"account{account_id}_url",
         url
     )
 
     ADDON.setSettingString(
-        "account1_username",
+        f"account{account_id}_username",
         username
     )
 
     ADDON.setSettingString(
-        "account1_password",
+        f"account{account_id}_password",
         password
     )
 
     ADDON.setSettingBool(
-        "account1_enabled",
+        f"account{account_id}_enabled",
         True
     )
 
@@ -798,14 +807,14 @@ def get_local_ip():
     finally:
         s.close()
 
-def add_account():
+def add_account(account_id):
     """Add account over phone"""
-    start_setup_server()
+    start_setup_server(account_id)
 
     ip = get_local_ip()
 
     xbmcgui.Dialog().ok(
-        "TorBox Setup",
+        f"Account {account_id} Setup",
         "Open on your phone:\n\n"
         f"http://{ip}:8765"
     )
@@ -1164,7 +1173,8 @@ def router():
         view_overrides()
 
     elif action == 'add_account':
-        add_account()
+        account_id   = int(params.get('account', 1))
+        add_account(account_id)
 
     elif action == 'settings':
         ADDON.openSettings()
