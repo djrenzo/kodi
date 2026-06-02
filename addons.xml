@@ -57,7 +57,7 @@
 </addon>
 <addon id="plugin.video.torbox"
        name="TorBox WebDAV"
-       version="2.0.11"
+       version="2.0.12"
        provider-name="TorBox">
   <requires>
     <import addon="xbmc.python" version="3.0.0"/>
