@@ -1163,6 +1163,9 @@ def router():
     elif action == 'view_overrides':
         view_overrides()
 
+    elif action == 'add_account':
+        add_account()
+
     elif action == 'settings':
         ADDON.openSettings()
 
