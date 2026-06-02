@@ -687,6 +687,48 @@ def view_overrides():
 # Library source entry points
 # ---------------------------------------------------------------------------
 
+def ensure_video_source(name, path):
+    sources_file = xbmcvfs.translatePath(
+        "special://profile/sources.xml"
+    )
+
+    if not os.path.exists(sources_file):
+        root = ET.Element("sources")
+        ET.SubElement(root, "video")
+        ET.ElementTree(root).write(
+            sources_file,
+            encoding="utf-8",
+            xml_declaration=True
+        )
+
+    tree = ET.parse(sources_file)
+    root = tree.getroot()
+
+    video = root.find("video")
+    if video is None:
+        video = ET.SubElement(root, "video")
+
+    for source in video.findall("source"):
+        src_name = source.find("name")
+        if src_name is not None and src_name.text == name:
+            return
+
+    source = ET.SubElement(video, "source")
+
+    ET.SubElement(source, "name").text = name
+
+    p = ET.SubElement(source, "path")
+    p.set("pathversion", "1")
+    p.text = path
+
+    ET.SubElement(source, "allowsharing").text = "true"
+
+    tree.write(
+        sources_file,
+        encoding="utf-8",
+        xml_declaration=True
+    )
+
 def list_library_accounts():
     """
     Root for when the addon is used as a Kodi library source.
@@ -935,7 +977,26 @@ def export_library(account_index):
         )
     )
 
-    xbmc.executebuiltin('UpdateLibrary(video)')
+    if not ADDON.getSettingBool('library_source_created'):
+        ensure_video_source(
+            'TorBox Library',
+            library_root
+        )
+
+        ADDON.setSettingBool(
+            'library_source_created',
+            True
+        )
+
+        xbmcgui.Dialog().ok(
+            'TorBox',
+            'TorBox Library source has been added.\n\n'
+            'Go to Videos → Files → TorBox Library\n'
+            'and set Content = TV Shows.'
+        )
+
+    else:
+        xbmc.executebuiltin('UpdateLibrary(video)')
 
 # ---------------------------------------------------------------------------
 # Router

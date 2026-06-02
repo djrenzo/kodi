@@ -25,6 +25,7 @@
     <setting id="library_enabled" type="bool" label="Enable library integration" default="true"/>
     <setting id="library_scraper" type="enum" label="Metadata scraper" values="TheMovieDB|TheTVDB" default="0"/>
     <setting id="library_path" type="folder" label="Library Export Folder" default="special://profile/addon_data/plugin.video.torbox/library/" />
+    <setting id="library_source_created" type="bool" default="false" visible="false"/>
   </category>
   <category label="Playback">
     <setting id="stream_verify_ssl" type="bool" label="Verify SSL certificates" default="true"/>
