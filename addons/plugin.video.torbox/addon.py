@@ -22,6 +22,7 @@ import xbmcgui
 import xbmcplugin
 import xbmcaddon
 import xbmcvfs
+import shutil
 
 ADDON        = xbmcaddon.Addon()
 ADDON_ID     = ADDON.getAddonInfo('id')
@@ -377,6 +378,20 @@ def list_accounts():
         })
         xbmcplugin.addDirectoryItem(HANDLE, lib_url, li2, isFolder=True)
 
+        li = xbmcgui.ListItem(
+            label='{} — Export Library'.format(acc['name'])
+        )
+
+        xbmcplugin.addDirectoryItem(
+            HANDLE,
+            build_url({
+                'action': 'export_library',
+                'account': acc['index']
+            }),
+            li,
+            isFolder=False
+        )
+
     # Overrides manager
     li = xbmcgui.ListItem(label='[COLOR yellow]✎ Manage show overrides[/COLOR]')
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'view_overrides'}), li, isFolder=False)
@@ -687,6 +702,227 @@ def list_library_accounts():
     xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
+def get_library_path():
+    path = ADDON.getSettingString('library_path')
+
+    if not path:
+        xbmcgui.Dialog().notification(
+            'TorBox',
+            'Library path not configured',
+            xbmcgui.NOTIFICATION_ERROR
+        )
+        return None
+
+    return xbmcvfs.translatePath(path)
+
+
+def write_text_file(path, content):
+    folder = os.path.dirname(path)
+
+    if not xbmcvfs.exists(folder):
+        xbmcvfs.mkdirs(folder)
+
+    with xbmcvfs.File(path, 'w') as f:
+        f.write(content)
+
+
+def write_tvshow_nfo(show_folder, title, tvdb_id=None):
+    xml = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<tvshow>',
+        '  <title>{}</title>'.format(title)
+    ]
+
+    if tvdb_id:
+        xml.append(
+            '  <uniqueid type="tvdb" default="true">{}</uniqueid>'.format(
+                tvdb_id
+            )
+        )
+
+    xml.append('</tvshow>')
+
+    write_text_file(
+        os.path.join(show_folder, 'tvshow.nfo'),
+        '\n'.join(xml)
+    )
+
+
+def walk_webdav(account, remote_path):
+    """
+    Recursively returns all video files beneath remote_path.
+    """
+
+    full_url = account['url'] + remote_path
+
+    xml_root = propfind(
+        full_url,
+        account['username'],
+        account['password'],
+        depth=1
+    )
+
+    if xml_root is None:
+        return []
+
+    items = parse_propfind(
+        xml_root,
+        account['url'],
+        remote_path
+    )
+
+    files = []
+
+    for item in items:
+
+        if item['is_collection']:
+
+            child = unquote(item['path'])
+
+            if not child.endswith('/'):
+                child += '/'
+
+            files.extend(
+                walk_webdav(account, child)
+            )
+
+        else:
+            ext = os.path.splitext(item['name'])[1].lower()
+
+            if ext in VIDEO_EXTS:
+                files.append(item)
+
+    return files
+
+def export_library(account_index):
+    account = get_account(account_index)
+
+    if not account:
+        xbmcgui.Dialog().notification(
+            'TorBox',
+            'Account not found',
+            xbmcgui.NOTIFICATION_ERROR
+        )
+        return
+
+    library_root = get_library_path()
+
+    if not library_root:
+        return
+
+    if not xbmcvfs.exists(library_root):
+        xbmcvfs.mkdirs(library_root)
+
+    overrides = load_overrides()
+
+    root_xml = propfind(
+        account['url'] + '/',
+        account['username'],
+        account['password'],
+        depth=1
+    )
+
+    if root_xml is None:
+        return
+
+    shows = parse_propfind(
+        root_xml,
+        account['url'],
+        '/'
+    )
+
+    created = 0
+
+    for show in shows:
+
+        if not show['is_collection']:
+            continue
+
+        raw_name = show['name']
+
+        override = overrides.get(raw_name, {})
+
+        if override:
+            clean_title = override.get('title', raw_name)
+            tvdb_id = override.get('tvdb_id')
+        else:
+            clean_title, _ = clean_show_name(raw_name)
+            tvdb_id = None
+
+        show_folder = os.path.join(
+            library_root,
+            clean_title
+        )
+
+        if not xbmcvfs.exists(show_folder):
+            xbmcvfs.mkdirs(show_folder)
+
+        write_tvshow_nfo(
+            show_folder,
+            clean_title,
+            tvdb_id
+        )
+
+        child_path = unquote(show['path'])
+
+        if not child_path.endswith('/'):
+            child_path += '/'
+
+        episodes = walk_webdav(
+            account,
+            child_path
+        )
+
+        for ep in episodes:
+
+            season, episode = extract_episode_info(
+                ep['name']
+            )
+
+            if season is None:
+                continue
+
+            season_folder = os.path.join(
+                show_folder,
+                'Season {:02d}'.format(season)
+            )
+
+            if not xbmcvfs.exists(season_folder):
+                xbmcvfs.mkdirs(season_folder)
+
+            plugin_url = build_url({
+                'action': 'play',
+                'account': account_index,
+                'url': ep['full_url']
+            })
+
+            strm_name = '{}.S{:02d}E{:02d}.strm'.format(
+                clean_title,
+                season,
+                episode
+            )
+
+            strm_path = os.path.join(
+                season_folder,
+                strm_name
+            )
+
+            write_text_file(
+                strm_path,
+                plugin_url
+            )
+
+            created += 1
+
+    xbmcgui.Dialog().ok(
+        'TorBox',
+        'Export complete\n\n{} STRM files generated'.format(
+            created
+        )
+    )
+
+    xbmc.executebuiltin('UpdateLibrary(video)')
+
 # ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
@@ -727,6 +963,11 @@ def router():
 
     elif action == 'refresh':
         xbmc.executebuiltin('UpdateLibrary(video)')
+    
+    elif action == 'export_library':
+    export_library(
+        int(params.get('account', 1))
+    )
 
     else:
         log('Unknown action: {}'.format(action), xbmc.LOGWARNING)
