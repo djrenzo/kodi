@@ -356,12 +356,16 @@ def get_params():
 def list_accounts():
     accounts = get_accounts()
     if not accounts:
-        xbmcgui.Dialog().ok(
-            'TorBox WebDAV',
-            'No accounts configured.\n\nOpen Settings and enter your TorBox credentials.'
-        )
-        ADDON.openSettings()
-        return
+        # xbmcgui.Dialog().ok(
+        #     'TorBox WebDAV',
+        #     'No accounts configured.\n\nOpen Settings and enter your TorBox credentials.'
+        # )
+        # ADDON.openSettings()
+        # return
+
+        # Overrides manager
+        li = xbmcgui.ListItem(label='[COLOR yellow]Add account via Phone[/COLOR]')
+        xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'add_account'}), li, isFolder=False)
 
     for acc in accounts:
         # --- Browse entry (file browser) ---
@@ -374,22 +378,22 @@ def list_accounts():
             li, isFolder=True
         )
 
-        # --- Library entry (use this URL as your Kodi video source) ---
-        lib_url = build_url({'action': 'library_browse', 'account': acc['index'], 'path': '/'})
-        li2 = xbmcgui.ListItem(label='{} — Library Source'.format(acc['name']))
-        li2.setArt({'icon': 'DefaultAddonVideo.png', 'thumb': 'DefaultAddonVideo.png'})
-        li2.setInfo('video', {
-            'title': acc['name'],
-            'plot': (
-                'Add this to your Kodi library:\n\n'
-                '1. Settings → Media → Library → Add video source\n'
-                '2. Browse → Plugin → TorBox WebDAV\n'
-                '3. Choose "{} — Library Source"\n'
-                '4. Set content = TV Shows, scraper = TheTVDB\n'
-                '5. Scan library'.format(acc['name'])
-            )
-        })
-        xbmcplugin.addDirectoryItem(HANDLE, lib_url, li2, isFolder=True)
+        # # --- Library entry (use this URL as your Kodi video source) ---
+        # lib_url = build_url({'action': 'library_browse', 'account': acc['index'], 'path': '/'})
+        # li2 = xbmcgui.ListItem(label='{} — Library Source'.format(acc['name']))
+        # li2.setArt({'icon': 'DefaultAddonVideo.png', 'thumb': 'DefaultAddonVideo.png'})
+        # li2.setInfo('video', {
+        #     'title': acc['name'],
+        #     'plot': (
+        #         'Add this to your Kodi library:\n\n'
+        #         '1. Settings → Media → Library → Add video source\n'
+        #         '2. Browse → Plugin → TorBox WebDAV\n'
+        #         '3. Choose "{} — Library Source"\n'
+        #         '4. Set content = TV Shows, scraper = TheTVDB\n'
+        #         '5. Scan library'.format(acc['name'])
+        #     )
+        # })
+        # xbmcplugin.addDirectoryItem(HANDLE, lib_url, li2, isFolder=True)
 
         li = xbmcgui.ListItem(
             label='{} — Export Library'.format(acc['name'])
@@ -681,6 +685,130 @@ def view_overrides():
         del overrides[folder_name]
         save_overrides(overrides)
         xbmcgui.Dialog().notification('TorBox', 'Override removed', xbmcgui.NOTIFICATION_INFO, 2000)
+
+### IPHONE
+
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs
+
+server = None
+
+class ConfigHandler(BaseHTTPRequestHandler):
+
+    def do_GET(self):
+        html = """
+        <html>
+        <body>
+            <h2>TorBox Setup</h2>
+
+            <form method="POST">
+                URL<br>
+                <input name="url"><br><br>
+
+                Username<br>
+                <input name="username"><br><br>
+
+                Password<br>
+                <input name="password" type="password"><br><br>
+
+                <input type="submit" value="Save">
+            </form>
+        </body>
+        </html>
+        """
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.end_headers()
+        self.wfile.write(html.encode())
+
+    def do_POST(self):
+        length = int(self.headers["Content-Length"])
+
+        data = self.rfile.read(length).decode()
+
+        form = parse_qs(data)
+
+        url = form.get("url", [""])[0]
+        username = form.get("username", [""])[0]
+        password = form.get("password", [""])[0]
+
+        save_credentials(url, username, password)
+
+        self.send_response(200)
+        self.end_headers()
+
+        self.wfile.write(
+            b"<h2>Saved. You may close this page.</h2>"
+        )
+
+        threading.Thread(
+            target=server.shutdown,
+            daemon=True
+        ).start()
+
+def start_setup_server():
+    global server
+
+    server = HTTPServer(
+        ("0.0.0.0", 8765),
+        ConfigHandler
+    )
+
+    thread = threading.Thread(
+        target=server.serve_forever,
+        daemon=True
+    )
+
+    thread.start()
+
+def save_credentials(url, username, password):
+    ADDON.setSettingString(
+        "account1_url",
+        url
+    )
+
+    ADDON.setSettingString(
+        "account1_username",
+        username
+    )
+
+    ADDON.setSettingString(
+        "account1_password",
+        password
+    )
+
+    ADDON.setSettingBool(
+        "account1_enabled",
+        True
+    )
+
+
+def get_local_ip():
+    import socket
+    s = socket.socket(
+        socket.AF_INET,
+        socket.SOCK_DGRAM
+    )
+
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    finally:
+        s.close()
+
+def add_account():
+    """Add account over phone"""
+    start_setup_server()
+
+    ip = get_local_ip()
+
+    xbmcgui.Dialog().ok(
+        "TorBox Setup",
+        "Open on your phone:\n\n"
+        f"http://{ip}:8765"
+    )
 
 
 # ---------------------------------------------------------------------------
