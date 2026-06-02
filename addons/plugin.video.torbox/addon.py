@@ -30,6 +30,7 @@ ADDON_PATH   = xbmcvfs.translatePath(ADDON.getAddonInfo('path'))
 PROFILE_PATH = xbmcvfs.translatePath(ADDON.getAddonInfo('profile'))
 HANDLE       = int(sys.argv[1])
 BASE_URL     = sys.argv[0]
+MAX_ACCOUNTS = 3
 
 OVERRIDES_FILE = os.path.join(PROFILE_PATH, 'overrides.json')
 
@@ -171,22 +172,6 @@ def clean_show_name(raw_name):
 
     return s, year
 
-
-# def extract_episode_info(filename):
-#     """
-#     Extract season/episode numbers from a filename.
-#     Returns (season, episode) or (None, None).
-#     """
-#     # Standard SxxExx
-#     m = re.search(r'[Ss](\d{1,2})[Ee](\d{1,3})', filename)
-#     if m:
-#         return int(m.group(1)), int(m.group(2))
-#     # xXXeXX or 1x01 style
-#     m = re.search(r'(\d{1,2})[xX](\d{2,3})', filename)
-#     if m:
-#         return int(m.group(1)), int(m.group(2))
-#     return None, None
-
 def extract_episode_info(filename):
     patterns = [
         r'[Ss](\d{1,2})[.\-_ ]?[Ee](\d{1,3})',
@@ -207,7 +192,7 @@ def extract_episode_info(filename):
 
 def get_accounts():
     accounts = []
-    for i in range(1, 4):
+    for i in range(1, MAX_ACCOUNTS + 1):
         if not ADDON.getSettingBool('account{}_enabled'.format(i)):
             continue
         name     = ADDON.getSettingString('account{}_name'.format(i))
@@ -410,15 +395,16 @@ def list_accounts():
         )
 
     next_acc = int(acc["index"]) + 1
-    li = xbmcgui.ListItem(label=f'[COLOR yellow]Add account {next_acc} via Phone[/COLOR]')
-    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'add_account', 'account': next_acc}), li, isFolder=False)
+    if next_acc <= MAX_ACCOUNTS:
+        li = xbmcgui.ListItem(label=f'[COLOR springgreen]Add account {next_acc} via Phone[/COLOR]')
+        xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'add_account', 'account': next_acc}), li, isFolder=False)
 
     # Overrides manager
-    li = xbmcgui.ListItem(label='[COLOR yellow]✎ Manage show overrides[/COLOR]')
+    li = xbmcgui.ListItem(label='[COLOR yellow]Manage show overrides[/COLOR]')
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'view_overrides'}), li, isFolder=False)
 
     # Settings shortcut
-    li = xbmcgui.ListItem(label='[COLOR gray]⚙ Settings[/COLOR]')
+    li = xbmcgui.ListItem(label='[COLOR gray]Settings[/COLOR]')
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'settings'}), li, isFolder=False)
 
     xbmcplugin.endOfDirectory(HANDLE)
@@ -695,9 +681,12 @@ def view_overrides():
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs
+import time
 
 server = None
 server_account_id = None
+_qr_window = None
+_qr_control = None
 
 class ConfigHandler(BaseHTTPRequestHandler):
 
@@ -753,6 +742,17 @@ class ConfigHandler(BaseHTTPRequestHandler):
             daemon=True
         ).start()
 
+        global _qr_window, _qr_control
+
+        try:
+            if _qr_window and _qr_control:
+                _qr_window.removeControl(_qr_control)
+        except Exception:
+            pass
+
+        _qr_window = None
+        _qr_control = None
+
 def start_setup_server(account_id):
     global server
     global server_account_id
@@ -807,17 +807,44 @@ def get_local_ip():
     finally:
         s.close()
 
+def show_qr(ip):
+    url = f"http://{ip}:8765"
+
+    # QR code generated via public API
+    qr_url = (
+        "https://api.qrserver.com/v1/create-qr-code/"
+        f"?size=400x400&data={url}&t={int(time.time())}"
+    )
+
+    # Create image control
+    control = xbmcgui.ControlImage(
+        200,   # x
+        100,   # y
+        400,   # width
+        400,   # height
+        qr_url
+    )
+
+    # Add to Kodi window
+    window = xbmcgui.Window(10000)  # Default window
+    window.addControl(control)
+
+    return window, control
+
 def add_account(account_id):
     """Add account over phone"""
     start_setup_server(account_id)
 
     ip = get_local_ip()
 
-    xbmcgui.Dialog().ok(
-        f"Account {account_id} Setup",
-        "Open on your phone:\n\n"
-        f"http://{ip}:8765"
-    )
+    global _qr_window, _qr_control
+    _qr_window, _qr_control = show_qr(ip)
+
+    # xbmcgui.Dialog().ok(
+    #     f"Account {account_id} Setup",
+    #     "Open on your phone:\n\n"
+    #     f"http://{ip}:8765"
+    # )
 
 
 # ---------------------------------------------------------------------------
