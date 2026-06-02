@@ -995,6 +995,8 @@ def export_library(account_index):
             'and set Content = TV Shows.'
         )
 
+        xbmc.executebuiltin('ActivateWindow(Videos,Files,return)')
+
     else:
         xbmc.executebuiltin('UpdateLibrary(video)')
 
