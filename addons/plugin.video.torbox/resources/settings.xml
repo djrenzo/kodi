@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<settings>
+  <category label="Account 1">
+    <setting id="account1_enabled" type="bool" label="Enable Account 1" default="true"/>
+    <setting id="account1_name" type="text" label="Display Name" default="TorBox Account 1"/>
+    <setting id="account1_url" type="text" label="WebDAV URL" default="https://webdav.torbox.app"/>
+    <setting id="account1_username" type="text" label="Username" default=""/>
+    <setting id="account1_password" type="text" label="Password" option="hidden" default=""/>
+  </category>
+  <category label="Account 2">
+    <setting id="account2_enabled" type="bool" label="Enable Account 2" default="false"/>
+    <setting id="account2_name" type="text" label="Display Name" default="TorBox Account 2"/>
+    <setting id="account2_url" type="text" label="WebDAV URL" default="https://webdav.torbox.app"/>
+    <setting id="account2_username" type="text" label="Username" default=""/>
+    <setting id="account2_password" type="text" label="Password" option="hidden" default=""/>
+  </category>
+  <category label="Account 3">
+    <setting id="account3_enabled" type="bool" label="Enable Account 3" default="false"/>
+    <setting id="account3_name" type="text" label="Display Name" default="TorBox Account 3"/>
+    <setting id="account3_url" type="text" label="WebDAV URL" default="https://webdav.torbox.app"/>
+    <setting id="account3_username" type="text" label="Username" default=""/>
+    <setting id="account3_password" type="text" label="Password" option="hidden" default=""/>
+  </category>
+  <category label="Library">
+    <setting id="library_enabled" type="bool" label="Enable library integration" default="true"/>
+    <setting id="library_scraper" type="enum" label="Metadata scraper" values="TheMovieDB|TheTVDB" default="0"/>
+    <setting id="library_path" type="folder" label="Library Export Folder" default="special://profile/addon_data/plugin.video.torbox/library/" />
+  </category>
+  <category label="Playback">
+    <setting id="stream_verify_ssl" type="bool" label="Verify SSL certificates" default="true"/>
+    <setting id="show_hidden" type="bool" label="Show hidden files" default="false"/>
+  </category>
+</settings>
