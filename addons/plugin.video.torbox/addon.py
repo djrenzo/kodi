@@ -965,9 +965,9 @@ def router():
         xbmc.executebuiltin('UpdateLibrary(video)')
     
     elif action == 'export_library':
-    export_library(
-        int(params.get('account', 1))
-    )
+        export_library(
+            int(params.get('account', 1))
+        )
 
     else:
         log('Unknown action: {}'.format(action), xbmc.LOGWARNING)
