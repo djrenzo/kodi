@@ -536,6 +536,8 @@ def play_item(account_index, stream_url):
         li.setMimeType(mimetypes[ext])
         li.setContentLookup(False)
 
+    li.setSubtitles([])
+
     xbmcplugin.setResolvedUrl(HANDLE, True, li)
 
 
