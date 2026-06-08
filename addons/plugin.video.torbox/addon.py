@@ -82,15 +82,18 @@ def load_overrides():
       "1883 S01 1080p TV+ WEB-DL [TR-EN] AAC2.0 H264-TURG": {
         "title": "1883",
         "year": 2021,
-        "tvdb_id": "396390"
+        "tvdb_id": "396390",
+        "type": "tvshow"
       },
-      "Landman - Season 01 [2024-2025] ...": {
-        "title": "Landman",
-        "year": 2024,
-        "tvdb_id": "XXXXXX"
+      "Interstellar 2014 1080p BluRay x264": {
+        "title": "Interstellar",
+        "year": 2014,
+        "tmdb_id": "157336",
+        "type": "movie"
       }
     }
     Keys are the raw TorBox folder names (without trailing slash).
+    "type" is either "tvshow" (default) or "movie".
     """
     if not xbmcvfs.exists(OVERRIDES_FILE):
         return {}
@@ -120,21 +123,12 @@ def clean_show_name(raw_name):
     """
     Strip quality/encoding tags from a TorBox folder name and return
     (clean_title, year_or_None).
-
-    Examples:
-      "1883 S01 1080p TV+ WEB-DL [TR-EN] AAC2.0 H264-TURG"  -> ("1883", None)
-      "Landman - Season 01 [2024-2025] 1080p BDRip ..."       -> ("Landman", 2024)
-      "Twin.Peaks.1990.S01-S03.1080p.BluRay.x265"            -> ("Twin Peaks", 1990)
-      "Peaky.Blinders.The.Immortal.Man.2026.1080p.NF.WEBRip" -> ("Peaky Blinders The Immortal Man", 2026)
     """
     s = raw_name
 
-    # Replace dots/underscores with spaces first (handle Scene-style names)
-    # but only if there are multiple dots (not a real title with one dot)
     if s.count('.') >= 2:
         s = _DOTS_DASHES.sub(' ', s)
 
-    # Extract year before we destroy it
     year = None
     yr_range = _YEAR_RANGE.search(s)
     if yr_range:
@@ -145,29 +139,15 @@ def clean_show_name(raw_name):
         if yr:
             year = int(yr.group())
 
-    # Remove bracketed content (except (year))
     s = _BRACKETS.sub(' ', s)
-
-    # Remove season tags like S01, S01-S03
     s = re.sub(r'\bS\d{1,2}(?:-S\d{1,2})?\b', ' ', s, flags=re.IGNORECASE)
-    # Remove "Season XX" or "Season XX-XX"
     s = re.sub(r'\bSeason\s+\d{1,2}(?:\s*-\s*\d{1,2})?\b', ' ', s, flags=re.IGNORECASE)
-
-    # Remove quality tags
     s = _QUALITY_TAGS.sub(' ', s)
-
-    # Remove year now that we've captured it
     s = _YEAR.sub(' ', s)
-
-    # Remove trailing group name after dash
     s = re.sub(r'\s+-\s*\w+$', '', s)
     s = re.sub(r'-\w+$', '', s)
-
-    # Strip leftover punctuation
     s = re.sub(r'[+]', ' ', s)
     s = re.sub(r'[^\w\s\'\-\.]', ' ', s)
-
-    # Collapse whitespace
     s = _MULTI_SPACE.sub(' ', s).strip(' -.')
 
     return s, year
@@ -280,7 +260,6 @@ def parse_propfind(xml_root, base_url, current_path):
         href = href_el.text.strip()
         path = urlparse(href).path
 
-        # Skip the directory itself
         if unquote(path).rstrip('/') == decoded_current:
             continue
 
@@ -343,7 +322,6 @@ def list_accounts():
     next_acc = 1
     
     for acc in accounts:
-        # --- Browse entry (file browser) ---
         li = xbmcgui.ListItem(label='[B]{} — Browse[/B]'.format(acc['name']))
         li.setArt({'icon': 'DefaultFolder.png', 'thumb': 'DefaultFolder.png'})
         li.setInfo('video', {'title': acc['name'], 'plot': 'Browse files directly'})
@@ -352,23 +330,6 @@ def list_accounts():
             build_url({'action': 'browse', 'account': acc['index'], 'path': '/'}),
             li, isFolder=True
         )
-
-        # # --- Library entry (use this URL as your Kodi video source) ---
-        # lib_url = build_url({'action': 'library_browse', 'account': acc['index'], 'path': '/'})
-        # li2 = xbmcgui.ListItem(label='{} — Library Source'.format(acc['name']))
-        # li2.setArt({'icon': 'DefaultAddonVideo.png', 'thumb': 'DefaultAddonVideo.png'})
-        # li2.setInfo('video', {
-        #     'title': acc['name'],
-        #     'plot': (
-        #         'Add this to your Kodi library:\n\n'
-        #         '1. Settings → Media → Library → Add video source\n'
-        #         '2. Browse → Plugin → TorBox WebDAV\n'
-        #         '3. Choose "{} — Library Source"\n'
-        #         '4. Set content = TV Shows, scraper = TheTVDB\n'
-        #         '5. Scan library'.format(acc['name'])
-        #     )
-        # })
-        # xbmcplugin.addDirectoryItem(HANDLE, lib_url, li2, isFolder=True)
 
         li = xbmcgui.ListItem(
             label='{} — Export Library'.format(acc['name'])
@@ -389,11 +350,9 @@ def list_accounts():
         li = xbmcgui.ListItem(label=f'[COLOR springgreen]Add account {next_acc} via Phone[/COLOR]')
         xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'add_account', 'account': next_acc}), li, isFolder=False)
 
-    # Overrides manager
     li = xbmcgui.ListItem(label='[COLOR yellow]Manage show overrides[/COLOR]')
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'view_overrides'}), li, isFolder=False)
 
-    # Settings shortcut
     li = xbmcgui.ListItem(label='[COLOR gray]Settings[/COLOR]')
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'settings'}), li, isFolder=False)
 
@@ -401,11 +360,6 @@ def list_accounts():
 
 
 def list_directory(account_index, remote_path, is_library_root=False):
-    """
-    Browse a WebDAV path.
-    When is_library_root=True the top-level folders are treated as TV shows
-    and Kodi library metadata hints are injected.
-    """
     account = get_account(account_index)
     if not account:
         xbmcgui.Dialog().notification('TorBox', 'Account not found', xbmcgui.NOTIFICATION_ERROR)
@@ -420,11 +374,9 @@ def list_directory(account_index, remote_path, is_library_root=False):
     overrides   = load_overrides()
     show_hidden = ADDON.getSettingBool('show_hidden')
 
-    # Signal to Kodi what kind of content this is
     if is_library_root:
         xbmcplugin.setContent(HANDLE, 'tvshows')
     else:
-        # Detect content type from path depth / files present
         has_video = any(
             os.path.splitext(i['name'])[1].lower() in VIDEO_EXTS
             for i in items if not i['is_collection']
@@ -439,27 +391,26 @@ def list_directory(account_index, remote_path, is_library_root=False):
 
         ext = os.path.splitext(name)[1].lower()
 
-        # ── FOLDER (show root or season folder) ──────────────────────────
         if item['is_collection']:
             child_path = unquote(item['path'])
             if not child_path.endswith('/'):
                 child_path += '/'
 
-            # Always resolve clean title and year (shown in UI + passed to scraper)
             override    = overrides.get(name, {})
             if override:
                 clean_title = override.get('title', name)
                 year        = override.get('year')
                 tvdb_id     = override.get('tvdb_id', '')
                 tmdb_id     = override.get('tmdb_id', '')
+                media_type  = override.get('type', 'tvshow')
             else:
                 clean_title, year = clean_show_name(name)
                 tvdb_id  = ''
                 tmdb_id  = ''
+                media_type = 'tvshow'
 
-            log('Folder: "{}" -> "{}" ({})'.format(name, clean_title, year))
+            log('Folder: "{}" -> "{}" ({}) [{}]'.format(name, clean_title, year, media_type))
 
-            # Display clean name; show raw name as subtitle so user can tell what it is
             display_label = clean_title
             if year:
                 display_label = '{} ({})'.format(clean_title, year)
@@ -468,12 +419,11 @@ def list_directory(account_index, remote_path, is_library_root=False):
             info = {
                 'title':       clean_title,
                 'tvshowtitle': clean_title,
-                'mediatype':   'tvshow',
+                'mediatype':   media_type,
             }
             if year:
                 info['year'] = year
 
-            # Unique IDs help Kodi scraper find exact match
             try:
                 li.setUniqueIDs({
                     'tvdb': tvdb_id,
@@ -482,7 +432,6 @@ def list_directory(account_index, remote_path, is_library_root=False):
             except Exception:
                 pass
 
-            # Context menu always available
             li.addContextMenuItems([
                 ('Set show title/override',
                  'RunPlugin({})'.format(
@@ -509,7 +458,6 @@ def list_directory(account_index, remote_path, is_library_root=False):
                 li, isFolder=True
             )
 
-        # ── VIDEO FILE ───────────────────────────────────────────────────
         elif ext in VIDEO_EXTS:
             season, episode = extract_episode_info(name)
 
@@ -526,7 +474,6 @@ def list_directory(account_index, remote_path, is_library_root=False):
             li.setArt({'icon': 'DefaultVideo.png', 'thumb': 'DefaultVideo.png'})
             li.setProperty('IsPlayable', 'true')
 
-            # Mime type
             mimetypes = {
                 '.mkv': 'video/x-matroska', '.mp4': 'video/mp4',
                 '.avi': 'video/x-msvideo',  '.ts':  'video/mp2t',
@@ -557,12 +504,6 @@ def list_directory(account_index, remote_path, is_library_root=False):
 
 
 def build_authed_url(stream_url, username, password):
-    """
-    Embed credentials into the URL as https://user:pass@host/path.
-    Kodi's internal libcurl handles this natively on all platforms
-    including iOS, unlike setHttpHeader which is unreliable.
-    Special characters in username/password are percent-encoded.
-    """
     parsed = urlparse(stream_url)
     user   = quote(username, safe='')
     pw     = quote(password, safe='')
@@ -575,7 +516,6 @@ def build_authed_url(stream_url, username, password):
 
 
 def play_item(account_index, stream_url):
-    """Resolve playback with credentials embedded in URL for universal Kodi compat."""
     account = get_account(account_index)
     if not account:
         xbmcgui.Dialog().notification('TorBox', 'Account not found', xbmcgui.NOTIFICATION_ERROR)
@@ -605,7 +545,8 @@ def play_item(account_index, stream_url):
 
 def set_override(folder_name, account_index):
     """
-    Interactive dialog to set a manual title/year/TVDB override for a folder.
+    Interactive dialog to set a manual title/year/type/ID override for a folder.
+    'type' can be 'tvshow' (default) or 'movie'.
     """
     overrides   = load_overrides()
     existing    = overrides.get(folder_name, {})
@@ -613,7 +554,7 @@ def set_override(folder_name, account_index):
 
     kb = xbmcgui.Dialog()
 
-    title = kb.input('Show title for:\n"{}"'.format(folder_name[:60]),
+    title = kb.input('Show/movie title for:\n"{}"'.format(folder_name[:60]),
                      defaultt=existing.get('title', clean_guess))
     if title is None:
         return
@@ -622,23 +563,57 @@ def set_override(folder_name, account_index):
                         defaultt=str(existing.get('year', year_guess or '')),
                         type=xbmcgui.INPUT_NUMERIC)
 
-    tvdb_id = kb.input('TheTVDB ID (find at thetvdb.com — leave blank to auto)',
-                       defaultt=existing.get('tvdb_id', ''))
+    # ── Content type selection ──────────────────────────────────────────
+    current_type   = existing.get('type', 'tvshow')
+    type_choices   = ['TV Show', 'Movie']
+    type_default   = 1 if current_type == 'movie' else 0
+    type_choice    = kb.select(
+        'Content type for "{}"'.format(title[:40]),
+        type_choices,
+        preselect=type_default
+    )
+    if type_choice < 0:
+        return  # user cancelled
+    media_type = 'movie' if type_choice == 1 else 'tvshow'
 
-    entry = {'title': title.strip()}
+    # ── ID fields depend on type ────────────────────────────────────────
+    tvdb_id = ''
+    tmdb_id = ''
+    if media_type == 'tvshow':
+        tvdb_id = kb.input(
+            'TheTVDB ID (thetvdb.com — leave blank to auto)',
+            defaultt=existing.get('tvdb_id', '')
+        )
+        if tvdb_id is None:
+            return
+    else:
+        tmdb_id = kb.input(
+            'TMDB ID (themoviedb.org — leave blank to auto)',
+            defaultt=existing.get('tmdb_id', '')
+        )
+        if tmdb_id is None:
+            return
+
+    # ── Build and save entry ────────────────────────────────────────────
+    entry = {'title': title.strip(), 'type': media_type}
     if year_str:
         try:
             entry['year'] = int(year_str)
         except ValueError:
             pass
-    if tvdb_id.strip():
+    if tvdb_id and tvdb_id.strip():
         entry['tvdb_id'] = tvdb_id.strip()
+    if tmdb_id and tmdb_id.strip():
+        entry['tmdb_id'] = tmdb_id.strip()
 
     overrides[folder_name] = entry
     save_overrides(overrides)
 
     xbmcgui.Dialog().notification(
-        'TorBox', 'Override saved for "{}"'.format(title), xbmcgui.NOTIFICATION_INFO, 3000
+        'TorBox',
+        'Override saved: "{}" [{}]'.format(title, media_type),
+        xbmcgui.NOTIFICATION_INFO,
+        3000
     )
     log('Override saved: {} -> {}'.format(folder_name, entry))
 
@@ -651,8 +626,11 @@ def view_overrides():
         return
 
     items = list(overrides.items())
-    labels = ['{} → {} ({})'.format(
-        k[:40], v.get('title', '?'), v.get('year', '?')
+    labels = ['{} → {} ({}) [{}]'.format(
+        k[:40],
+        v.get('title', '?'),
+        v.get('year', '?'),
+        v.get('type', 'tvshow')
     ) for k, v in items]
 
     idx = xbmcgui.Dialog().select('TorBox Overrides — select to delete', labels)
@@ -787,29 +765,6 @@ def get_local_ip():
     finally:
         s.close()
 
-# def show_qr(ip):
-#     url = f"http://{ip}:8765"
-
-#     # QR code generated via public API
-#     qr_url = (
-#         "https://api.qrserver.com/v1/create-qr-code/"
-#         f"?size=400x400&data={url}&t={int(time.time())}"
-#     )
-
-#     # Create image control
-#     control = xbmcgui.ControlImage(
-#         200,   # x
-#         100,   # y
-#         400,   # width
-#         400,   # height
-#         qr_url
-#     )
-
-#     # Add to Kodi window
-#     window = xbmcgui.Window(10000)  # Default window
-#     window.addControl(control)
-
-#     return window, control
 
 class QRDialog(xbmcgui.WindowDialog):
 
@@ -823,23 +778,20 @@ class QRDialog(xbmcgui.WindowDialog):
             f"?size=400x400&data={url}&t={int(time.time())}"
         )
 
-        # Background
         self.background = xbmcgui.ControlImage(
             100, 50, 600, 500,
-            "special://skin/extras/dialog_bg.png"  # optional
+            "special://skin/extras/dialog_bg.png"
         )
 
-        # QR image
         self.qr = xbmcgui.ControlImage(
             200, 75, 400, 400,
             qr_url
         )
 
-        # Instructions
         self.label = xbmcgui.ControlLabel(
             150, 490, 500, 30,
             "Scan with your phone to add your account",
-            alignment=2  # centered
+            alignment=2
         )
 
         self.addControl(self.qr)
@@ -848,7 +800,6 @@ class QRDialog(xbmcgui.WindowDialog):
     def onAction(self, action):
         action_id = action.getId()
 
-        # Back / Escape / Previous Menu
         if action_id in (
             xbmcgui.ACTION_NAV_BACK,
             xbmcgui.ACTION_PREVIOUS_MENU,
@@ -867,15 +818,8 @@ def add_account(account_id):
 
     dialog.doModal()
 
-    # Execution continues after dialog closes
     del dialog
     _qr_window = None
-
-    # xbmcgui.Dialog().ok(
-    #     f"Account {account_id} Setup",
-    #     "Open on your phone:\n\n"
-    #     f"http://{ip}:8765"
-    # )
 
 
 # ---------------------------------------------------------------------------
@@ -925,10 +869,6 @@ def ensure_video_source(name, path):
     )
 
 def list_library_accounts():
-    """
-    Root for when the addon is used as a Kodi library source.
-    Each account appears as a TV show root.
-    """
     accounts = get_accounts()
     if not accounts:
         xbmcgui.Dialog().ok('TorBox', 'Configure accounts in Settings first.')
@@ -977,32 +917,51 @@ def write_text_file(path, content):
 
 
 def write_tvshow_nfo(show_folder, title, tvdb_id=None):
+    """Only written when a TVDB ID is available; Kodi scrapes by filename otherwise."""
+    if not tvdb_id:
+        return
+
     xml = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<tvshow>',
-        '  <title>{}</title>'.format(title)
+        '  <title>{}</title>'.format(title),
+        '  <uniqueid type="tvdb" default="true">{}</uniqueid>'.format(tvdb_id),
+        '</tvshow>',
     ]
 
-    if tvdb_id:
-        xml.append(
-            '  <uniqueid type="tvdb" default="true">{}</uniqueid>'.format(
-                tvdb_id
-            )
-        )
+    write_text_file(
+        os.path.join(show_folder, 'tvshow.nfo'),
+        '\n'.join(xml)
+    )
 
-        xml.append('</tvshow>')
 
-        write_text_file(
-            os.path.join(show_folder, 'tvshow.nfo'),
-            '\n'.join(xml)
-        )
+def write_movie_nfo(movie_folder, title, year=None, tmdb_id=None):
+    """Only written when a TMDB ID is available; Kodi scrapes by filename otherwise."""
+    if not tmdb_id:
+        return
+
+    xml = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<movie>',
+        '  <title>{}</title>'.format(title),
+    ]
+
+    if year:
+        xml.append('  <year>{}</year>'.format(year))
+
+    xml.append(
+        '  <uniqueid type="tmdb" default="true">{}</uniqueid>'.format(tmdb_id)
+    )
+    xml.append('</movie>')
+
+    write_text_file(
+        os.path.join(movie_folder, 'movie.nfo'),
+        '\n'.join(xml)
+    )
 
 
 def walk_webdav(account, remote_path):
-    """
-    Recursively returns all video files beneath remote_path.
-    """
-
+    """Recursively returns all video files beneath remote_path."""
     full_url = account['url'] + remote_path
 
     xml_root = propfind(
@@ -1043,6 +1002,41 @@ def walk_webdav(account, remote_path):
                 files.append(item)
 
     return files
+
+
+def find_main_video(account, remote_path):
+    """
+    Return the single largest video file directly inside remote_path
+    (non-recursive). Used for movie folders where there is one .mkv
+    (possibly alongside extras, samples, etc.).
+    Falls back to the first video found if sizes are unavailable.
+    """
+    full_url = account['url'] + remote_path
+
+    xml_root = propfind(
+        full_url,
+        account['username'],
+        account['password'],
+        depth=1
+    )
+
+    if xml_root is None:
+        return None
+
+    items = parse_propfind(xml_root, account['url'], remote_path)
+
+    video_files = [
+        i for i in items
+        if not i['is_collection']
+        and os.path.splitext(i['name'])[1].lower() in VIDEO_EXTS
+    ]
+
+    if not video_files:
+        return None
+
+    # Pick the largest file — most likely the main feature, not a sample
+    return max(video_files, key=lambda x: x['size'])
+
 
 def export_library(account_index):
     account = get_account(account_index)
@@ -1088,106 +1082,108 @@ def export_library(account_index):
         if not show['is_collection']:
             continue
 
-        raw_name = show['name']
-
-        override = overrides.get(raw_name, {})
+        raw_name   = show['name']
+        override   = overrides.get(raw_name, {})
+        media_type = override.get('type', 'tvshow')  # default: tvshow
 
         if override:
             clean_title = override.get('title', raw_name)
-            tvdb_id = override.get('tvdb_id')
+            year        = override.get('year')
+            tvdb_id     = override.get('tvdb_id')
+            tmdb_id     = override.get('tmdb_id')
         else:
-            clean_title, _ = clean_show_name(raw_name)
+            clean_title, year = clean_show_name(raw_name)
             tvdb_id = None
-
-        show_folder = os.path.join(
-            library_root,
-            clean_title
-        )
-
-        if not xbmcvfs.exists(show_folder):
-            xbmcvfs.mkdirs(show_folder)
-
-        write_tvshow_nfo(
-            show_folder,
-            clean_title,
-            tvdb_id
-        )
+            tmdb_id = None
 
         child_path = unquote(show['path'])
-
         if not child_path.endswith('/'):
             child_path += '/'
 
-        episodes = walk_webdav(
-            account,
-            child_path
-        )
+        # ── MOVIE ───────────────────────────────────────────────────────
+        if media_type == 'movie':
+            # Kodi expects: Movies/Title (Year)/Title (Year).strm
+            folder_name = clean_title
+            if year:
+                folder_name = '{} ({})'.format(clean_title, year)
 
-        for ep in episodes:
+            movie_folder = os.path.join(library_root, folder_name)
 
-            season, episode = extract_episode_info(
-                ep['name']
-            )
+            if not xbmcvfs.exists(movie_folder):
+                xbmcvfs.mkdirs(movie_folder)
 
-            if season is None:
+            write_movie_nfo(movie_folder, clean_title, year, tmdb_id)
+
+            # Find the main video file in the remote folder
+            video_item = find_main_video(account, child_path)
+
+            if video_item is None:
+                log('No video found for movie: {}'.format(raw_name), xbmc.LOGWARNING)
                 continue
 
-            # season_folder = os.path.join(
-            #     show_folder,
-            #     'Season {:02d}'.format(season)
-            # )
-
-            # if not xbmcvfs.exists(season_folder):
-            #     xbmcvfs.mkdirs(season_folder)
-
             plugin_url = build_url({
-                'action': 'play',
+                'action':  'play',
                 'account': account_index,
-                'url': ep['full_url']
+                'url':     video_item['full_url']
             })
 
-            strm_name = '{}.S{:02d}E{:02d}.strm'.format(
-                clean_title,
-                season,
-                episode
-            )
+            strm_name = '{}.strm'.format(folder_name)
+            strm_path = os.path.join(movie_folder, strm_name)
 
-            strm_path = os.path.join(
-                # season_folder,
-                show_folder,
-                strm_name
-            )
-
-            write_text_file(
-                strm_path,
-                plugin_url
-            )
-
+            write_text_file(strm_path, plugin_url)
+            log('Movie STRM: {} -> {}'.format(raw_name, video_item['name']))
             created += 1
+
+        # ── TV SHOW ─────────────────────────────────────────────────────
+        else:
+            show_folder = os.path.join(library_root, clean_title)
+
+            if not xbmcvfs.exists(show_folder):
+                xbmcvfs.mkdirs(show_folder)
+
+            write_tvshow_nfo(show_folder, clean_title, tvdb_id)
+
+            episodes = walk_webdav(account, child_path)
+
+            for ep in episodes:
+
+                season, episode = extract_episode_info(ep['name'])
+
+                if season is None:
+                    continue
+
+                plugin_url = build_url({
+                    'action':  'play',
+                    'account': account_index,
+                    'url':     ep['full_url']
+                })
+
+                strm_name = '{}.S{:02d}E{:02d}.strm'.format(
+                    clean_title,
+                    season,
+                    episode
+                )
+
+                strm_path = os.path.join(show_folder, strm_name)
+
+                write_text_file(strm_path, plugin_url)
+                created += 1
 
     xbmcgui.Dialog().ok(
         'TorBox',
-        'Export complete\n\n{} STRM files generated'.format(
-            created
-        )
+        'Export complete\n\n{} STRM files generated'.format(created)
     )
 
     if not ADDON.getSettingBool('library_source_created'):
-        ensure_video_source(
-            'TorBox Library',
-            library_root
-        )
+        ensure_video_source('TorBox Library', library_root)
 
-        ADDON.setSettingBool(
-            'library_source_created',
-            True
-        )
+        ADDON.setSettingBool('library_source_created', True)
 
         xbmcgui.Dialog().ok(
             'TorBox',
             'TorBox Library source has been added.\n\n'
             'Go to Videos → Files → TorBox Library\n'
-            'and set Content = TV Shows.'
+            'and set Content = TV Shows or Movies as appropriate.'
         )
 
         xbmc.executebuiltin('ActivateWindow(Videos,Files,return)')
@@ -1216,7 +1212,6 @@ def router():
     elif action == 'library_browse':
         account_index = int(params.get('account', 1))
         path          = params.get('path', '/')
-        # Top level = show roots; deeper = episodes
         is_root       = (path == '/')
         list_directory(account_index, path, is_library_root=is_root)
 
@@ -1239,11 +1234,9 @@ def router():
 
     elif action == 'refresh':
         xbmc.executebuiltin('UpdateLibrary(video)')
-    
+
     elif action == 'export_library':
-        export_library(
-            int(params.get('account', 1))
-        )
+        export_library(int(params.get('account', 1)))
 
     else:
         log('Unknown action: {}'.format(action), xbmc.LOGWARNING)
