@@ -411,9 +411,14 @@ def list_directory(account_index, remote_path, is_library_root=False):
 
             log('Folder: "{}" -> "{}" ({}) [{}]'.format(name, clean_title, year, media_type))
 
-            display_label = clean_title
+            # display_label = clean_title
+            display_label = '[COLOR springgreen]{} |[/COLOR] {}'.format(media_type, clean_title)
             if year:
-                display_label = '{} ({})'.format(clean_title, year)
+                display_label = '{} ({})'.format(display_label, year)
+
+            if tmdb_id:
+                display_label = '{} [{}]'.format(display_label, tmdb_id)
+            
 
             li   = xbmcgui.ListItem(label=display_label)
             info = {
