@@ -727,12 +727,11 @@ def get_library_folder_for(folder_name):
     Return the local library folder path for a given raw WebDAV folder name.
     Uses override title/year if present, falls back to clean_show_name.
     """
-    library_root = ADDON.getSettingString('library_path')
+    library_root = get_library_path()
     if not library_root:
         return None
     if not ADDON.getSettingBool('library_source_created'):
         return None
-    library_root = xbmcvfs.translatePath(library_root)
 
     overrides  = load_overrides()
     override   = overrides.get(folder_name, {})
@@ -763,7 +762,42 @@ def add_subtitles(folder_name, account_index):
     overrides = load_overrides()
     override  = overrides.get(folder_name, {})
     tmdb_id   = override.get('tmdb_id', '').strip()
+    subs = override.get('subs', [])
+
     dialog    = xbmcgui.Dialog()
+
+    def make_label_og(r):
+        hi   = ' [HI]' if r.get('hi') else ''
+        language = ' ({})'.format(r['language']) if r.get('language') else ''
+        return '{}{}{}'.format(r.get('fileName'), hi, language)
+
+    if subs:
+        idx = dialog.select('Existing subtitles', [make_label_og(r) for r in subs])
+        if idx >= 0:
+            chosen  = results[idx]
+            sub_url = chosen['url']
+            lang_code = "en"
+            fname = chosen.get('fileName')
+
+            lib_folder = get_library_folder_for(folder_name)
+            if not lib_folder:
+                dialog.ok('TorBox', 'Library path not configured. Export the library first.')
+                return
+
+            dest_path = os.path.join(lib_folder, fname)
+
+            if not download_subtitle(sub_url, dest_path):
+                dialog.ok('TorBox', 'Failed to download subtitle.\nCheck the log for details.')
+                return
+            
+            dialog.notification(
+                'TorBox',
+                'Subtitle saved: {}'.format(fname),
+                xbmcgui.NOTIFICATION_INFO,
+                3000
+            )
+            log('Subtitle saved to {} and recorded in overrides'.format(dest_path))
+            return
 
     if not tmdb_id:
         dialog.ok(
@@ -794,9 +828,9 @@ def add_subtitles(folder_name, account_index):
 
     chosen  = results[idx]
     sub_url = chosen['url']
-    fname   = chosen.get('fileName') or '{}.srt'.format(chosen['id'])
-    if not fname.lower().endswith('.srt'):
-        fname += '.srt'
+    lang_code = "en"
+    fname = chosen.get('fileName').split(".")[0] or chosen['id']
+    fname = f"{fname}.{lang_code}.srt"
 
     lib_folder = get_library_folder_for(folder_name)
     if not lib_folder:
