@@ -1,0 +1,97 @@
+import re
+from html import unescape
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+import xbmc
+
+from torbox_common import log
+
+TMDB_SEARCH_URL = 'https://www.themoviedb.org/search/movie'
+TMDB_RESULT_LIMIT = 10
+
+_CARD_START_RE = re.compile(r'data-object-id="[^"]+"')
+_ID_RE = re.compile(r'href="/movie/(?P<id>\d+)(?:-[^"]*)?"')
+_POSTER_RE = re.compile(r'<img[^>]+src="(?P<poster>https://media\.themoviedb\.org/[^"]+)"')
+_TITLE_RE = re.compile(r'<h2[^>]*>(?P<title_html>.*?)</h2>', re.DOTALL)
+_DATE_RE = re.compile(r'<span class="release_date[^"]*"[^>]*>(?P<date_html>.*?)</span>', re.DOTALL)
+_TAG_RE = re.compile(r'<[^>]+>')
+_SPACE_RE = re.compile(r'\s+')
+_YEAR_RE = re.compile(r'\b(?:19|20)\d{2}\b')
+
+
+def _clean_html_text(value):
+    text = _TAG_RE.sub(' ', value or '')
+    text = unescape(text)
+    return _SPACE_RE.sub(' ', text).strip()
+
+
+def search_tmdb_movies(title, year=None, limit=TMDB_RESULT_LIMIT):
+    query = (title or '').strip()
+    if not query:
+        return []
+
+    if year:
+        query = '{} y:{}'.format(query, year)
+
+    url = '{}?{}'.format(TMDB_SEARCH_URL, urlencode({'query': query}))
+    log('TMDB search query: {}'.format(url))
+
+    try:
+        req = Request(
+            url,
+            headers={
+                'User-Agent': 'Kodi/TorBox-Plugin',
+                'Accept-Language': 'en-US,en;q=0.8',
+            },
+        )
+        response = urlopen(req, timeout=20)
+        html = response.read().decode('utf-8', errors='ignore')
+    except Exception as exc:
+        log('TMDB search error: {}'.format(exc), xbmc.LOGWARNING)
+        return []
+
+    results = []
+    seen_ids = set()
+
+    card_starts = [match.start() for match in _CARD_START_RE.finditer(html)]
+    card_starts.append(len(html))
+
+    for index in range(len(card_starts) - 1):
+        chunk = html[card_starts[index]:card_starts[index + 1]]
+
+        id_match = _ID_RE.search(chunk)
+        if not id_match:
+            continue
+
+        movie_id = id_match.group('id')
+        if movie_id in seen_ids:
+            continue
+
+        title_match = _TITLE_RE.search(chunk)
+        if not title_match:
+            continue
+
+        movie_title = _clean_html_text(title_match.group('title_html'))
+        if not movie_title:
+            continue
+
+        date_match = _DATE_RE.search(chunk)
+        release_text = _clean_html_text(date_match.group('date_html')) if date_match else ''
+        year_match = _YEAR_RE.search(release_text)
+        poster_match = _POSTER_RE.search(chunk)
+
+        results.append(
+            {
+                'id': movie_id,
+                'title': movie_title,
+                'year': int(year_match.group(0)) if year_match else None,
+                'poster_url': poster_match.group('poster') if poster_match else '',
+            }
+        )
+        seen_ids.add(movie_id)
+
+        if len(results) >= max(1, limit):
+            break
+
+    return results

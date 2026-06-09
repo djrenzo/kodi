@@ -31,15 +31,18 @@ from torbox_common import (
 from torbox_library import export_library
 from torbox_setup import add_account
 from torbox_subtitles import add_subtitles, find_local_subtitles
+from torbox_tmdb import search_tmdb_movies
 from torbox_text import (
     CONTEXT_ADD_SUBTITLES,
     CONTEXT_REFRESH_LIBRARY,
     CONTEXT_SET_OVERRIDE,
+    DIALOG_MANUAL_TMDB,
     DIALOG_OVERRIDES_DELETE_BODY,
     DIALOG_OVERRIDES_DELETE_TITLE,
     DIALOG_OVERRIDES_EMPTY,
     DIALOG_OVERRIDES_SELECT_DELETE,
     DIALOG_OVERRIDES_TITLE,
+    DIALOG_PICK_TMDB,
     DIALOG_SET_CONTENT_TYPE,
     DIALOG_SET_TITLE,
     DIALOG_SET_TMDB,
@@ -55,6 +58,7 @@ from torbox_text import (
     NOTIFY_ACCOUNT_NOT_FOUND,
     NOTIFY_OVERRIDE_REMOVED,
     NOTIFY_OVERRIDE_SAVED,
+    NOTIFY_SEARCHING_TMDB,
 )
 from torbox_webdav import build_authed_url, parse_propfind, propfind
 
@@ -274,6 +278,45 @@ def play_item(account_index, stream_url, strm_path=None):
     xbmcplugin.setResolvedUrl(HANDLE, True, li)
 
 
+def choose_tmdb_movie(title, year=None, existing_tmdb_id=''):
+    dialog = xbmcgui.Dialog()
+    manual_default = existing_tmdb_id or ''
+
+    dialog.notification(APP_NAME, NOTIFY_SEARCHING_TMDB, xbmcgui.NOTIFICATION_INFO, 2000)
+    results = search_tmdb_movies(title, year)
+
+    if not results:
+        return dialog.input(DIALOG_SET_TMDB, defaultt=manual_default)
+
+    options = []
+    for result in results:
+        year_text = ' ({})'.format(result['year']) if result.get('year') else ''
+        item = xbmcgui.ListItem(
+            label='{}{}'.format(result['title'], year_text),
+            label2='TMDB {}'.format(result['id']),
+        )
+        poster_url = result.get('poster_url')
+        if poster_url:
+            item.setArt({'icon': poster_url, 'thumb': poster_url})
+        options.append(item)
+
+    options.append(
+        xbmcgui.ListItem(
+            label=DIALOG_MANUAL_TMDB,
+            label2='TMDB {}'.format(manual_default) if manual_default else '',
+        )
+    )
+
+    choice = dialog.select(DIALOG_PICK_TMDB.format(title[:40]), options, useDetails=True)
+    if choice < 0:
+        return None
+
+    if choice == len(results):
+        return dialog.input(DIALOG_SET_TMDB, defaultt=manual_default)
+
+    return results[choice]['id']
+
+
 def set_override(folder_name, account_index):
     del account_index
 
@@ -289,6 +332,8 @@ def set_override(folder_name, account_index):
     )
     if title is None:
         return
+
+    title = title.strip()
 
     year_str = dialog.input(
         DIALOG_SET_YEAR,
@@ -307,6 +352,13 @@ def set_override(folder_name, account_index):
 
     tvdb_id = ''
     tmdb_id = ''
+    year_value = None
+    if year_str:
+        try:
+            year_value = int(year_str)
+        except ValueError:
+            year_value = None
+
     if media_type == 'tvshow':
         tvdb_id = dialog.input(
             DIALOG_SET_TVDB,
@@ -315,19 +367,17 @@ def set_override(folder_name, account_index):
         if tvdb_id is None:
             return
     else:
-        tmdb_id = dialog.input(
-            DIALOG_SET_TMDB,
-            defaultt=existing.get('tmdb_id', ''),
+        tmdb_id = choose_tmdb_movie(
+            title,
+            year=year_value,
+            existing_tmdb_id=existing.get('tmdb_id', ''),
         )
         if tmdb_id is None:
             return
 
-    entry = {'title': title.strip(), 'type': media_type}
-    if year_str:
-        try:
-            entry['year'] = int(year_str)
-        except ValueError:
-            pass
+    entry = {'title': title, 'type': media_type}
+    if year_value is not None:
+        entry['year'] = year_value
 
     if tvdb_id and tvdb_id.strip():
         entry['tvdb_id'] = tvdb_id.strip()
