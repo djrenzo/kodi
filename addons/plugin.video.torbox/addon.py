@@ -553,8 +553,9 @@ def find_local_subtitles(strm_path):
         for fname in os.listdir(folder):
             if os.path.splitext(fname)[1].lower() not in sub_exts:
                 continue
-            if fname.startswith(strm_base):
-                found.append(os.path.join(folder, fname))
+            # if fname.startswith(strm_base):
+            #     found.append(os.path.join(folder, fname))
+            found.append(os.path.join(folder, fname))
     except Exception as e:
         log('find_local_subtitles error: {}'.format(e), xbmc.LOGWARNING)
 
@@ -728,6 +729,8 @@ def get_library_folder_for(folder_name):
     """
     library_root = ADDON.getSettingString('library_path')
     if not library_root:
+        return None
+    if not ADDON.getSettingBool('library_source_created'):
         return None
     library_root = xbmcvfs.translatePath(library_root)
 
