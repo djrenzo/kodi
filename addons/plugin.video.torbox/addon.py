@@ -147,12 +147,14 @@ def list_directory(account_index, remote_path, is_library_root=False):
 
             override = overrides.get(name, {})
             thumb_url = ''
+            plot = ''
             if override:
                 clean_title = override.get('title', name)
                 year = override.get('year')
                 tvdb_id = override.get('tvdb_id', '')
                 tmdb_id = override.get('tmdb_id', '')
                 thumb_url = override.get('thumb', '')
+                plot = override.get('plot', '')
                 media_type = override.get('type', 'tvshow')
             else:
                 clean_title, year = clean_show_name(name)
@@ -173,7 +175,7 @@ def list_directory(account_index, remote_path, is_library_root=False):
                 'originaltitle': clean_title,
                 'sorttitle': clean_title,
                 'mediatype': media_type,
-                'plot': clean_title
+                'plot': plot or clean_title,
             }
             if year:
                 info['year'] = year
@@ -330,6 +332,7 @@ def choose_tmdb_movie(title, year=None, existing_tmdb_id=''):
         'id': selected['id'],
         'year': selected.get('year'),
         'poster_url': selected.get('poster_url', ''),
+        'plot': selected.get('plot', ''),
     }
 
 
@@ -394,6 +397,7 @@ def set_override(folder_name, account_index):
         tmdb_id = tmdb_choice.get('id', '')
         tmdb_year = tmdb_choice.get('year')
         tmdb_thumb = tmdb_choice.get('poster_url', '')
+        tmdb_plot = tmdb_choice.get('plot', '')
         if tmdb_year is not None and tmdb_year != year_value:
             year_value = tmdb_year
 
@@ -410,6 +414,10 @@ def set_override(folder_name, account_index):
             entry['thumb'] = tmdb_thumb
         elif existing.get('thumb'):
             entry['thumb'] = existing['thumb']
+        if tmdb_plot:
+            entry['plot'] = tmdb_plot
+        elif existing.get('plot'):
+            entry['plot'] = existing['plot']
     if existing.get('subs'):
         entry['subs'] = existing['subs']
 

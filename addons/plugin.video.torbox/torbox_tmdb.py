@@ -12,7 +12,9 @@ TMDB_RESULT_LIMIT = 10
 
 _CARD_START_RE = re.compile(r'data-object-id="[^"]+"')
 _ID_RE = re.compile(r'href="/movie/(?P<id>\d+)(?:-[^"]*)?"')
-_POSTER_RE = re.compile(r'<img[^>]+src="(?P<poster>https://media\.themoviedb\.org/[^"]+)"')
+_POSTER_SRC_RE = re.compile(r'https://media\.themoviedb\.org/t/p/w\d+_and_h\d+_face(?P<path>/[^\s"]+)')
+_PLOT_RE = re.compile(r'class="mt-4[^>]*>\s*<p>(?P<plot>.*?)</p>', re.DOTALL)
+_POSTER_BASE = 'https://media.themoviedb.org/t/p/w500'
 _TITLE_RE = re.compile(r'<h2[^>]*>(?P<title_html>.*?)</h2>', re.DOTALL)
 _DATE_RE = re.compile(r'<span class="release_date[^"]*"[^>]*>(?P<date_html>.*?)</span>', re.DOTALL)
 _TAG_RE = re.compile(r'<[^>]+>')
@@ -79,14 +81,20 @@ def search_tmdb_movies(title, year=None, limit=TMDB_RESULT_LIMIT):
         date_match = _DATE_RE.search(chunk)
         release_text = _clean_html_text(date_match.group('date_html')) if date_match else ''
         year_match = _YEAR_RE.search(release_text)
-        poster_match = _POSTER_RE.search(chunk)
+
+        poster_path_match = _POSTER_SRC_RE.search(chunk)
+        poster_url = '{}{}'.format(_POSTER_BASE, poster_path_match.group('path')) if poster_path_match else ''
+
+        plot_match = _PLOT_RE.search(chunk)
+        plot = _clean_html_text(plot_match.group('plot')) if plot_match else ''
 
         results.append(
             {
                 'id': movie_id,
                 'title': movie_title,
                 'year': int(year_match.group(0)) if year_match else None,
-                'poster_url': poster_match.group('poster') if poster_match else '',
+                'poster_url': poster_url,
+                'plot': plot,
             }
         )
         seen_ids.add(movie_id)
