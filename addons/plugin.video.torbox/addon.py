@@ -146,11 +146,13 @@ def list_directory(account_index, remote_path, is_library_root=False):
                 child_path += '/'
 
             override = overrides.get(name, {})
+            thumb_url = ''
             if override:
                 clean_title = override.get('title', name)
                 year = override.get('year')
                 tvdb_id = override.get('tvdb_id', '')
                 tmdb_id = override.get('tmdb_id', '')
+                thumb_url = override.get('thumb', '')
                 media_type = override.get('type', 'tvshow')
             else:
                 clean_title, year = clean_show_name(name)
@@ -202,7 +204,10 @@ def list_directory(account_index, remote_path, is_library_root=False):
                 ]
             )
 
-            li.setArt({'icon': 'DefaultFolder.png', 'thumb': 'DefaultFolder.png'})
+            art = {'icon': 'DefaultFolder.png', 'thumb': 'DefaultFolder.png'}
+            if thumb_url:
+                art.update({'thumb': thumb_url, 'icon': thumb_url, 'poster': thumb_url})
+            li.setArt(art)
             li.setInfo('video', info)
             xbmcplugin.addDirectoryItem(
                 HANDLE,
@@ -286,7 +291,10 @@ def choose_tmdb_movie(title, year=None, existing_tmdb_id=''):
     results = search_tmdb_movies(title, year)
 
     if not results:
-        return dialog.input(DIALOG_SET_TMDB, defaultt=manual_default)
+        manual_tmdb_id = dialog.input(DIALOG_SET_TMDB, defaultt=manual_default)
+        if manual_tmdb_id is None:
+            return None
+        return {'id': manual_tmdb_id, 'year': None, 'poster_url': ''}
 
     options = []
     for result in results:
@@ -312,9 +320,17 @@ def choose_tmdb_movie(title, year=None, existing_tmdb_id=''):
         return None
 
     if choice == len(results):
-        return dialog.input(DIALOG_SET_TMDB, defaultt=manual_default)
+        manual_tmdb_id = dialog.input(DIALOG_SET_TMDB, defaultt=manual_default)
+        if manual_tmdb_id is None:
+            return None
+        return {'id': manual_tmdb_id, 'year': None, 'poster_url': ''}
 
-    return results[choice]['id']
+    selected = results[choice]
+    return {
+        'id': selected['id'],
+        'year': selected.get('year'),
+        'poster_url': selected.get('poster_url', ''),
+    }
 
 
 def set_override(folder_name, account_index):
@@ -352,6 +368,7 @@ def set_override(folder_name, account_index):
 
     tvdb_id = ''
     tmdb_id = ''
+    tmdb_thumb = ''
     year_value = None
     if year_str:
         try:
@@ -367,13 +384,18 @@ def set_override(folder_name, account_index):
         if tvdb_id is None:
             return
     else:
-        tmdb_id = choose_tmdb_movie(
+        tmdb_choice = choose_tmdb_movie(
             title,
             year=year_value,
             existing_tmdb_id=existing.get('tmdb_id', ''),
         )
-        if tmdb_id is None:
+        if tmdb_choice is None:
             return
+        tmdb_id = tmdb_choice.get('id', '')
+        tmdb_year = tmdb_choice.get('year')
+        tmdb_thumb = tmdb_choice.get('poster_url', '')
+        if tmdb_year is not None and tmdb_year != year_value:
+            year_value = tmdb_year
 
     entry = {'title': title, 'type': media_type}
     if year_value is not None:
@@ -383,6 +405,11 @@ def set_override(folder_name, account_index):
         entry['tvdb_id'] = tvdb_id.strip()
     if tmdb_id and tmdb_id.strip():
         entry['tmdb_id'] = tmdb_id.strip()
+    if media_type == 'movie':
+        if tmdb_thumb:
+            entry['thumb'] = tmdb_thumb
+        elif existing.get('thumb'):
+            entry['thumb'] = existing['thumb']
     if existing.get('subs'):
         entry['subs'] = existing['subs']
 
