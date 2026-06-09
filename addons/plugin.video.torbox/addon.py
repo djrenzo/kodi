@@ -89,7 +89,15 @@ def load_overrides():
         "title": "Interstellar",
         "year": 2014,
         "tmdb_id": "157336",
-        "type": "movie"
+        "type": "movie",
+        "subs": [
+          {
+            "url": "https://dl.opensubtitles.org/...",
+            "fileName": "Interstellar (2014).en.srt",
+            "language": "en",
+            "hi": false
+          }
+        ]
       }
     }
     Keys are the raw TorBox folder names (without trailing slash).
@@ -411,18 +419,15 @@ def list_directory(account_index, remote_path, is_library_root=False):
 
             log('Folder: "{}" -> "{}" ({}) [{}]'.format(name, clean_title, year, media_type))
 
-            # display_label = clean_title
             display_label = '[COLOR springgreen]{} |[/COLOR] {}'.format(media_type, clean_title)
             if year:
                 display_label = '{} ({})'.format(display_label, year)
-
             if tmdb_id:
                 display_label = '{} [{}]'.format(display_label, tmdb_id)
-            
 
             li   = xbmcgui.ListItem(label=display_label)
             info = {
-                'title':       clean_title,
+                'title':       display_label,
                 'tvshowtitle': clean_title,
                 'mediatype':   media_type,
             }
@@ -441,6 +446,12 @@ def list_directory(account_index, remote_path, is_library_root=False):
                 ('Set show title/override',
                  'RunPlugin({})'.format(
                      build_url({'action': 'set_override',
+                                'folder_name': name,
+                                'account': account_index})
+                 )),
+                ('Add subtitles',
+                 'RunPlugin({})'.format(
+                     build_url({'action': 'add_subtitles',
                                 'folder_name': name,
                                 'account': account_index})
                  )),
@@ -520,7 +531,37 @@ def build_authed_url(stream_url, username, password):
                        parsed.params, parsed.query, parsed.fragment))
 
 
-def play_item(account_index, stream_url):
+# ---------------------------------------------------------------------------
+# Subtitle helpers
+# ---------------------------------------------------------------------------
+
+def find_local_subtitles(strm_path):
+    """
+    Return all subtitle files in the same folder as strm_path whose
+    filename starts with the STRM's base name (without extension).
+    e.g. "Rain Man (1988).strm" matches "Rain Man (1988).en.srt".
+    """
+    if not strm_path:
+        return []
+
+    strm_base = os.path.splitext(os.path.basename(strm_path))[0]
+    folder    = os.path.dirname(strm_path)
+    sub_exts  = ('.srt', '.ass', '.ssa', '.sub', '.vtt')
+    found     = []
+
+    try:
+        for fname in os.listdir(folder):
+            if os.path.splitext(fname)[1].lower() not in sub_exts:
+                continue
+            if fname.startswith(strm_base):
+                found.append(os.path.join(folder, fname))
+    except Exception as e:
+        log('find_local_subtitles error: {}'.format(e), xbmc.LOGWARNING)
+
+    return found
+
+
+def play_item(account_index, stream_url, strm_path=None):
     account = get_account(account_index)
     if not account:
         xbmcgui.Dialog().notification('TorBox', 'Account not found', xbmcgui.NOTIFICATION_ERROR)
@@ -528,6 +569,7 @@ def play_item(account_index, stream_url):
 
     authed_url = build_authed_url(stream_url, account['username'], account['password'])
     log('Playing (credentials embedded in URL)')
+    log('Local STRM: {}'.format(strm_path))
 
     li = xbmcgui.ListItem(path=authed_url)
 
@@ -541,7 +583,12 @@ def play_item(account_index, stream_url):
         li.setMimeType(mimetypes[ext])
         li.setContentLookup(False)
 
-    li.setSubtitles([])
+    # Pass any locally saved subtitle files (e.g. downloaded via Add Subtitles).
+    # Passing an explicit list also prevents Kodi from trying to re-open a
+    # previously remembered subtitle path against the remote stream URL.
+    local_subs = find_local_subtitles(strm_path) if strm_path else []
+    li.setSubtitles(local_subs)
+    log('Local subtitles: {}'.format(local_subs))
 
     xbmcplugin.setResolvedUrl(HANDLE, True, li)
 
@@ -601,7 +648,7 @@ def set_override(folder_name, account_index):
         if tmdb_id is None:
             return
 
-    # ── Build and save entry ────────────────────────────────────────────
+    # ── Build and save entry — preserve existing subs list ─────────────
     entry = {'title': title.strip(), 'type': media_type}
     if year_str:
         try:
@@ -612,6 +659,8 @@ def set_override(folder_name, account_index):
         entry['tvdb_id'] = tvdb_id.strip()
     if tmdb_id and tmdb_id.strip():
         entry['tmdb_id'] = tmdb_id.strip()
+    if existing.get('subs'):
+        entry['subs'] = existing['subs']
 
     overrides[folder_name] = entry
     save_overrides(overrides)
@@ -623,6 +672,160 @@ def set_override(folder_name, account_index):
         3000
     )
     log('Override saved: {} -> {}'.format(folder_name, entry))
+
+
+# ---------------------------------------------------------------------------
+# Subtitle search  (wyzie.io)
+# ---------------------------------------------------------------------------
+
+WYZIE_API   = 'https://sub.wyzie.io/search'
+WYZIE_KEY   = 'wyzie-gvo9qomam6re1xxww2krz89m7f0ww4ax'
+WYZIE_LIMIT = 10
+
+
+def fetch_subtitles(tmdb_id, language='en'):
+    """Query wyzie.io for subtitles by TMDB ID. Returns up to WYZIE_LIMIT results."""
+    params = urlencode({
+        'id':       tmdb_id,
+        'format':   'srt',
+        'language': language,
+        'key':      WYZIE_KEY,
+    })
+    url = '{}?{}'.format(WYZIE_API, params)
+    log('Wyzie query: {}'.format(url))
+    try:
+        req      = Request(url, headers={'User-Agent': 'Kodi/TorBox-Plugin'})
+        response = urlopen(req, timeout=15)
+        data     = json.loads(response.read().decode('utf-8'))
+        return data[:WYZIE_LIMIT] if isinstance(data, list) else []
+    except Exception as e:
+        log('fetch_subtitles error: {}'.format(e), xbmc.LOGWARNING)
+        return []
+
+
+def download_subtitle(sub_url, dest_path):
+    """Download subtitle from sub_url and write to dest_path. Returns True on success."""
+    log('Downloading subtitle: {}'.format(sub_url))
+    try:
+        req      = Request(sub_url, headers={'User-Agent': 'Kodi/TorBox-Plugin'})
+        response = urlopen(req, timeout=30)
+        data     = response.read()
+        folder   = os.path.dirname(dest_path)
+        if not xbmcvfs.exists(folder):
+            xbmcvfs.mkdirs(folder)
+        with xbmcvfs.File(dest_path, 'w') as f:
+            f.write(data.decode('utf-8', errors='replace'))
+        return True
+    except Exception as e:
+        log('download_subtitle error: {}'.format(e), xbmc.LOGWARNING)
+        return False
+
+
+def get_library_folder_for(folder_name):
+    """
+    Return the local library folder path for a given raw WebDAV folder name.
+    Uses override title/year if present, falls back to clean_show_name.
+    """
+    library_root = ADDON.getSettingString('library_path')
+    if not library_root:
+        return None
+    library_root = xbmcvfs.translatePath(library_root)
+
+    overrides  = load_overrides()
+    override   = overrides.get(folder_name, {})
+    media_type = override.get('type', 'tvshow')
+
+    if override:
+        clean_title = override.get('title', folder_name)
+        year        = override.get('year')
+    else:
+        clean_title, year = clean_show_name(folder_name)
+
+    if media_type == 'movie' and year:
+        sub_folder = '{} ({})'.format(clean_title, year)
+    else:
+        sub_folder = clean_title
+
+    return os.path.join(library_root, sub_folder)
+
+
+def add_subtitles(folder_name, account_index):
+    """
+    Search wyzie.io for subtitles for the given folder, show a pick list,
+    download the chosen .srt next to the STRM file, and record it in overrides.
+
+    Requires a tmdb_id to be set in the override. If not present, prompts
+    the user to set one first.
+    """
+    overrides = load_overrides()
+    override  = overrides.get(folder_name, {})
+    tmdb_id   = override.get('tmdb_id', '').strip()
+    dialog    = xbmcgui.Dialog()
+
+    if not tmdb_id:
+        dialog.ok(
+            'TorBox — Add Subtitles',
+            'No TMDB ID is set for this title.\n\n'
+            'Long-press the folder and choose "Set show title/override",\n'
+            'select Movie, and enter the TMDB ID first.'
+        )
+        return
+
+    dialog.notification('TorBox', 'Searching subtitles…', xbmcgui.NOTIFICATION_INFO, 2000)
+
+    results = fetch_subtitles(tmdb_id)
+
+    if not results:
+        dialog.ok('TorBox', 'No subtitles found for TMDB ID {}.'.format(tmdb_id))
+        return
+
+    def make_label(r):
+        hi   = ' [HI]' if r.get('isHearingImpaired') else ''
+        orig = ' ({})'.format(r['origin']) if r.get('origin') else ''
+        dls  = '  ↓{:,}'.format(r['downloadCount']) if r.get('downloadCount') else ''
+        return '{}{}{}{}'.format(r.get('fileName', r['id']), hi, orig, dls)
+
+    idx = dialog.select('Choose subtitle', [make_label(r) for r in results])
+    if idx < 0:
+        return
+
+    chosen  = results[idx]
+    sub_url = chosen['url']
+    fname   = chosen.get('fileName') or '{}.srt'.format(chosen['id'])
+    if not fname.lower().endswith('.srt'):
+        fname += '.srt'
+
+    lib_folder = get_library_folder_for(folder_name)
+    if not lib_folder:
+        dialog.ok('TorBox', 'Library path not configured. Export the library first.')
+        return
+
+    dest_path = os.path.join(lib_folder, fname)
+
+    if not download_subtitle(sub_url, dest_path):
+        dialog.ok('TorBox', 'Failed to download subtitle.\nCheck the log for details.')
+        return
+
+    # Record in overrides so subs survive re-exports and are auditable
+    subs = override.get('subs', [])
+    if not any(s.get('url') == sub_url for s in subs):
+        subs.append({
+            'url':      sub_url,
+            'fileName': fname,
+            'language': chosen.get('language', 'en'),
+            'hi':       chosen.get('isHearingImpaired', False),
+        })
+    override['subs']          = subs
+    overrides[folder_name]    = override
+    save_overrides(overrides)
+
+    dialog.notification(
+        'TorBox',
+        'Subtitle saved: {}'.format(fname),
+        xbmcgui.NOTIFICATION_INFO,
+        3000
+    )
+    log('Subtitle saved to {} and recorded in overrides'.format(dest_path))
 
 
 def view_overrides():
@@ -1128,14 +1331,15 @@ def export_library(account_index):
                 log('No video found for movie: {}'.format(raw_name), xbmc.LOGWARNING)
                 continue
 
+            strm_name = '{}.strm'.format(folder_name)
+            strm_path = os.path.join(movie_folder, strm_name)
+
             plugin_url = build_url({
                 'action':  'play',
                 'account': account_index,
-                'url':     video_item['full_url']
+                'url':     video_item['full_url'],
+                'strm':    strm_path,
             })
-
-            strm_name = '{}.strm'.format(folder_name)
-            strm_path = os.path.join(movie_folder, strm_name)
 
             write_text_file(strm_path, plugin_url)
             log('Movie STRM: {} -> {}'.format(raw_name, video_item['name']))
@@ -1159,12 +1363,6 @@ def export_library(account_index):
                 if season is None:
                     continue
 
-                plugin_url = build_url({
-                    'action':  'play',
-                    'account': account_index,
-                    'url':     ep['full_url']
-                })
-
                 strm_name = '{}.S{:02d}E{:02d}.strm'.format(
                     clean_title,
                     season,
@@ -1172,6 +1370,13 @@ def export_library(account_index):
                 )
 
                 strm_path = os.path.join(show_folder, strm_name)
+
+                plugin_url = build_url({
+                    'action':  'play',
+                    'account': account_index,
+                    'url':     ep['full_url'],
+                    'strm':    strm_path,
+                })
 
                 write_text_file(strm_path, plugin_url)
                 created += 1
@@ -1224,10 +1429,13 @@ def router():
 
     elif action == 'play':
         account_index = int(params.get('account', 1))
-        play_item(account_index, params.get('url', ''))
+        play_item(account_index, params.get('url', ''), params.get('strm'))
 
     elif action == 'set_override':
         set_override(params.get('folder_name', ''), int(params.get('account', 1)))
+
+    elif action == 'add_subtitles':
+        add_subtitles(params.get('folder_name', ''), int(params.get('account', 1)))
 
     elif action == 'view_overrides':
         view_overrides()
