@@ -155,7 +155,13 @@ def list_directory(account_index, remote_path, is_library_root=False):
                 display_label = '{} [{}]'.format(display_label, tmdb_id)
 
             li = xbmcgui.ListItem(label=display_label)
-            info = {'title': display_label, 'tvshowtitle': clean_title, 'mediatype': media_type}
+            info = {
+                'title': display_label,
+                'tvshowtitle': clean_title,
+                'originaltitle': clean_title,
+                'sorttitle': clean_title,
+                'mediatype': media_type,
+            }
             if year:
                 info['year'] = year
 
