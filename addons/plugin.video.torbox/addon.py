@@ -119,8 +119,14 @@ def list_directory(account_index, remote_path, is_library_root=False):
     if is_library_root:
         xbmcplugin.setContent(HANDLE, 'tvshows')
     else:
+        has_collections = any(item['is_collection'] for item in items)
         has_video = any(os.path.splitext(item['name'])[1].lower() in VIDEO_EXTS for item in items if not item['is_collection'])
-        xbmcplugin.setContent(HANDLE, 'episodes' if has_video else 'tvshows')
+        if has_collections:
+            xbmcplugin.setContent(HANDLE, 'tvshows')
+        elif has_video:
+            xbmcplugin.setContent(HANDLE, 'episodes')
+        else:
+            xbmcplugin.setContent(HANDLE, 'files')
 
     for item in sorted(items, key=lambda x: (not x['is_collection'], x['name'].lower())):
         name = item['name']
@@ -154,14 +160,14 @@ def list_directory(account_index, remote_path, is_library_root=False):
             if tmdb_id:
                 display_label = '{} [{}]'.format(display_label, tmdb_id)
 
-            li = xbmcgui.ListItem(label=clean_title, label2=display_label)
+            li = xbmcgui.ListItem(label=display_label)
             info = {
-                'title': clean_title,
+                'title': display_label,
                 'tvshowtitle': clean_title,
                 'originaltitle': clean_title,
                 'sorttitle': clean_title,
                 'mediatype': media_type,
-                'plot': f'PLOT = {clean_title}'
+                'plot': clean_title
             }
             if year:
                 info['year'] = year
