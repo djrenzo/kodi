@@ -154,7 +154,7 @@ def list_directory(account_index, remote_path, is_library_root=False):
             if tmdb_id:
                 display_label = '{} [{}]'.format(display_label, tmdb_id)
 
-            li = xbmcgui.ListItem(label=display_label)
+            li = xbmcgui.ListItem(label=clean_title)
             info = {
                 'title': display_label,
                 'tvshowtitle': clean_title,
