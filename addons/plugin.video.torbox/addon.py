@@ -774,7 +774,7 @@ def add_subtitles(folder_name, account_index):
     if subs:
         idx = dialog.select('Existing subtitles', [make_label_og(r) for r in subs])
         if idx >= 0:
-            chosen  = results[idx]
+            chosen  = subs[idx]
             sub_url = chosen['url']
             lang_code = "en"
             fname = chosen.get('fileName')
