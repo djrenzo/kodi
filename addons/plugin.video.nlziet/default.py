@@ -2579,11 +2579,11 @@ def play_item(content_id, fmt=None, st=None):
                 # add 1 minute to st to ensure we get the current program if st is exactly at the start of a program
                 st_plus_1min = int(st) + 300
                 epg_map = api.get_current_programs(channel_ids=[content_id], start_time=st_plus_1min)
-
-                content = epg_map.get(content_id).get("current").get("raw").get("content")
+                content = epg_map.get(content_id).get("current").get("raw").get("content").get("contentItemId")
 
                 # xbmcgui.Dialog().ok('NLZiet', f'Treating as live TV\nfmt={fmt}\ncontent_id={content_id}\nst={st}')
                 xbmcgui.Dialog().ok('NLZiet', f'{content}')
+                info = api.get_stream_info(content)
             except Exception as e:
                 xbmc.log(f"NLZiet get_current_programs failed: {e}", xbmc.LOGWARNING)
 
