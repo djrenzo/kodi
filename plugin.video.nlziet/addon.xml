@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<addon id="plugin.video.nlziet" name="NLZiet" version="1.0.2" provider-name="Nigel1992">
+  <requires>
+    <import addon="xbmc.python" version="3.0.0" />
+    <import addon="script.module.inputstreamhelper" version="0.6.0" />
+    <import addon="inputstream.adaptive" version="2.6.18" />
+  </requires>
+  <extension point="xbmc.python.pluginsource" library="default.py">
+    <provides>video</provides>
+  </extension>
+  <extension point="xbmc.service" library="service.py" />
+  <extension point="xbmc.addon.metadata">
+    <summary lang="nl">NLZiet streaming addon</summary>
+    <description lang="nl">Stream NLZiet content via de service API (vereist account)</description>
+    <assets>
+      <icon>icon.png</icon>
+      <fanart>resources/media/background.jpg</fanart>
+    </assets>
+  </extension>
+</addon>
