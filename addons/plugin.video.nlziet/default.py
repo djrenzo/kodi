@@ -2572,7 +2572,15 @@ def play_item(content_id, fmt=None, st=None):
     if fmt == 'live':
         if st:
             xbmc.log(f"NLZiet play_item: treating as live TV due to fmt='live' and st={st}", xbmc.LOGINFO)
-            xbmcgui.Dialog().ok('NLZiet', f'Treating as live TV\nfmt={fmt}\ncontent_id={content_id}\nst={st}')
+            try: # call get_current_programs, pass channel_ids=[content_id] and parse st from unix timestamp as date
+                from datetime import datetime, timezone
+                date = datetime.fromtimestamp(int(st), tz=timezone.utc).strftime('%Y-%m-%d')
+                epg_map = api.get_current_programs(channel_ids=[content_id], date=date)
+                # xbmcgui.Dialog().ok('NLZiet', f'Treating as live TV\nfmt={fmt}\ncontent_id={content_id}\nst={st}')
+                xbmcgui.Dialog().ok('NLZiet', f'{epg_map}')
+            except Exception as e:
+                xbmc.log(f"NLZiet get_current_programs failed: {e}", xbmc.LOGWARNING)
+
         else:
             info = api.get_stream_info(content_id, context='Live')
             xbmc.log(f"NLZiet LIVE TV: id={content_id} context='Live'", xbmc.LOGINFO)
