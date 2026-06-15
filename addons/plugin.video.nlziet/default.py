@@ -2559,7 +2559,7 @@ def ensure_inputstream_for_drm():
 # Global playback monitor for live TV subtitle control
 _playback_monitor = None
 
-def play_item(content_id, fmt=None):
+def play_item(content_id, fmt=None, st=None):
     username = ADDON.getSetting('username')
     password = ADDON.getSetting('password')
     # Use cached API instance - still makes the stream info call but avoids object init overhead
@@ -2568,10 +2568,14 @@ def play_item(content_id, fmt=None):
     except Exception:
         # Fallback to creating a new instance if cache fails
         api = NLZietAPI(username=username, password=password)
-    xbmc.log(f"NLZiet play_item called: id={content_id} fmt={fmt}", xbmc.LOGINFO)
+    xbmc.log(f"NLZiet play_item called: id={content_id} fmt={fmt} st={st}", xbmc.LOGINFO)
     if fmt == 'live':
-        info = api.get_stream_info(content_id, context='Live')
-        xbmc.log(f"NLZiet LIVE TV: id={content_id} context='Live'", xbmc.LOGINFO)
+        if st:
+            xbmc.log(f"NLZiet play_item: treating as live TV due to fmt='live' and st={st}", xbmc.LOGINFO)
+            xbmcgui.Dialog().ok('NLZiet', f'Treating as live TV\nfmt={fmt}\ncontent_id={content_id}\nst={st}')
+        else:
+            info = api.get_stream_info(content_id, context='Live')
+            xbmc.log(f"NLZiet LIVE TV: id={content_id} context='Live'", xbmc.LOGINFO)
     else:
         info = api.get_stream_info(content_id)
         xbmc.log(f"NLZiet REGULAR content: id={content_id} (not live)", xbmc.LOGINFO)
@@ -2893,7 +2897,7 @@ def router(paramstring):
     elif mode == 'browse':
         browse_category(params.get('type', 'all'))
     elif mode == 'play':
-        play_item(params.get('id'), params.get('fmt'))
+        play_item(content_id=params.get('id'), fmt=params.get('fmt'), st=params.get("st"))
 
 
 if __name__ == '__main__':
