@@ -2890,7 +2890,8 @@ class NLZietAPI:
             xbmc.log(f"NLZiet get_channels error: {e}", xbmc.LOGERROR)
             return []
 
-    def get_current_programs(self, channel_ids=None, date=None):
+
+    def get_current_programs(self, channel_ids=None, date=None, start_time=None):
         """Fetch EPG program locations for the given channels and return a mapping
         of channel_id -> current program info (title, description, start, end).
 
@@ -2898,6 +2899,8 @@ class NLZietAPI:
           the endpoint will be called without channel filters.
         - `date` should be a string in YYYY-MM-DD format; if omitted today's
           date (local) is used.
+        - `start_time` should be a Unix timestamp; if provided, returns programs
+          at that time instead of currently playing programs.
         """
         try:
             import datetime
@@ -2987,7 +2990,7 @@ class NLZietAPI:
                     items = flattened_items if flattened_items else items
 
             epg_map = {}
-            now_ts = int(time.time())
+            now_ts = int(start_time) if start_time is not None else int(time.time())
 
             for it in items:
                 if not isinstance(it, dict):
