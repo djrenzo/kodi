@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<settings version="1">
+  <section id="plugin.video.nlziet">
+
+    <category id="category_account" label="30003" help="">
+      <group id="1" label="">
+        <setting id="subscription_name" type="string" label="30103" help="">
+          <level>0</level>
+          <default/>
+          <constraints>
+            <allowempty>true</allowempty>
+          </constraints>
+          <enable>false</enable>
+          <control type="edit" format="string">
+            <heading>30103</heading>
+          </control>
+        </setting>
+        <setting id="subscription_expires" type="string" label="30104" help="">
+          <level>0</level>
+          <default/>
+          <constraints>
+            <allowempty>true</allowempty>
+          </constraints>
+          <enable>false</enable>
+          <control type="edit" format="string">
+            <heading>30104</heading>
+          </control>
+        </setting>
+        <setting id="max_devices" type="string" label="30105" help="">
+          <level>0</level>
+          <default/>
+          <constraints>
+            <allowempty>true</allowempty>
+          </constraints>
+          <enable>false</enable>
+          <control type="edit" format="string">
+            <heading>30105</heading>
+          </control>
+        </setting>
+        <setting id="logout_button" type="action" label="30106" help="">
+          <level>0</level>
+          <data>RunPlugin(plugin://$ID?mode=logout_confirm)</data>
+          <control type="button" format="action">
+            <close>true</close>
+          </control>
+        </setting>
+      </group>
+    </category>
+
+    <category id="category_profiles" label="30004" help="">
+      <group id="1" label="">
+        <setting id="profile_id" type="string" label="30107" help="">
+          <level>0</level>
+          <default/>
+          <constraints>
+            <allowempty>true</allowempty>
+          </constraints>
+          <enable>false</enable>
+          <control type="edit" format="string">
+            <heading>30107</heading>
+          </control>
+        </setting>
+        <setting id="profile_name" type="string" label="30108" help="">
+          <level>0</level>
+          <default/>
+          <constraints>
+            <allowempty>true</allowempty>
+          </constraints>
+          <enable>false</enable>
+          <control type="edit" format="string">
+            <heading>30108</heading>
+          </control>
+        </setting>
+      </group>
+    </category>
+
+    <category id="category_advanced" label="30005" help="">
+      <group id="1" label="">
+        <setting id="api_base_url" type="string" label="30109" help="">
+          <level>1</level>
+          <default>https://api.nlziet.nl</default>
+          <constraints>
+            <allowempty>true</allowempty>
+          </constraints>
+          <control type="edit" format="string">
+            <heading>30109</heading>
+          </control>
+        </setting>
+      </group>
+    </category>
+
+    <category id="category_playback" label="30006" help="">
+      <group id="1" label="">
+        <setting id="subtitles_default" type="boolean" label="30110" help="">
+          <level>0</level>
+          <default>false</default>
+          <control type="toggle"/>
+        </setting>
+      </group>
+    </category>
+
+    <category id="category_debug" label="30007" help="">
+      <group id="1" label="">
+        <setting id="debug_http" type="boolean" label="30111" help="">
+          <level>2</level>
+          <default>false</default>
+          <control type="toggle"/>
+        </setting>
+      </group>
+    </category>
+
+  </section>
+</settings>

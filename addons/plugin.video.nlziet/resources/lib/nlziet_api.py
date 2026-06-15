@@ -1,0 +1,3712 @@
+"""
+NLZiet API wrapper — form login + cookie handling.
+
+This implements the form-based login flow observed in the HAR you provided:
+- GET the login page, extract the anti-forgery token (`__RequestVerificationToken`)
+- POST the credentials (EmailAddress / Password / button) together with the token
+- Persist cookies in the addon's profile so subsequent API calls use the authenticated session
+
+Notes:
+- This implements the browser form login shown in the HAR. It does NOT (yet) perform
+  the OAuth PKCE code->token exchange; for that I need the HAR entries for the
+  authorize/callback and token endpoints (or the connect/token request/response).
+"""
+import re
+import os
+import json
+import time
+import urllib.request
+import urllib.parse
+import urllib.error
+import http.cookiejar
+import xbmcvfs
+import xbmcaddon
+import xbmc
+import traceback
+
+
+class NLZietAPI:
+    def __init__(self, username=None, password=None, base_url=None):
+        self.addon = xbmcaddon.Addon()
+        self.username = username or self.addon.getSetting('username')
+        self.password = password or self.addon.getSetting('password')
+        self.base_url = base_url or self.addon.getSetting('api_base_url') or 'https://api.nlziet.nl'
+        self.user_agent = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
+
+        addon_id = self.addon.getAddonInfo('id')
+        cookie_dir = xbmcvfs.translatePath('special://profile/addon_data/{}'.format(addon_id))
+        try:
+            os.makedirs(cookie_dir, exist_ok=True)
+        except Exception:
+            pass
+
+        # persistent debug log for HTTP requests/responses
+        self.debug_file = os.path.join(cookie_dir, 'nlziet_http_debug.txt')
+
+        self.cookie_file = os.path.join(cookie_dir, 'cookies.lwp')
+        self.stream_cookie_file = os.path.join(cookie_dir, 'stream_cookies')
+        self.profile_file = os.path.join(cookie_dir, 'profile.json')
+        self.token_file = os.path.join(cookie_dir, 'tokens.json')
+        # Local My List storage (fallback when server-side My List is unavailable)
+        self.mylist_file = os.path.join(cookie_dir, 'mylist.json')
+
+        self.cookie_jar = http.cookiejar.LWPCookieJar()
+        try:
+            if os.path.exists(self.cookie_file):
+                self.cookie_jar.load(self.cookie_file, ignore_discard=True, ignore_expires=True)
+        except Exception:
+            pass
+
+        # If we have an older JSON cookie dump (stream_cookies), import into LWPCookieJar
+        try:
+            if (not os.path.exists(self.cookie_file) or len(self.cookie_jar) == 0) and os.path.exists(self.stream_cookie_file):
+                with open(self.stream_cookie_file, 'r', encoding='utf-8') as f:
+                    sc = json.load(f)
+                for name, value in sc.items():
+                    try:
+                        c = http.cookiejar.Cookie(
+                            version=0,
+                            name=name,
+                            value=value,
+                            port=None,
+                            port_specified=False,
+                            domain='.nlziet.nl',
+                            domain_specified=True,
+                            domain_initial_dot=True,
+                            path='/',
+                            path_specified=True,
+                            secure=True,
+                            expires=None,
+                            discard=False,
+                            comment=None,
+                            comment_url=None,
+                            rest={'HttpOnly': 'True'},
+                            rfc2109=False,
+                        )
+                        self.cookie_jar.set_cookie(c)
+                    except Exception:
+                        pass
+                try:
+                    self.cookie_jar.save(self.cookie_file, ignore_discard=True, ignore_expires=True)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # load previously saved tokens if present (tokens.json preferred, fallback to profile.json)
+        self.tokens = {}
+        try:
+            if os.path.exists(self.token_file):
+                with open(self.token_file, 'r', encoding='utf-8') as f:
+                    self.tokens = json.load(f)
+            else:
+                if os.path.exists(self.profile_file):
+                    with open(self.profile_file, 'r', encoding='utf-8') as f:
+                        profile = json.load(f)
+                    access = profile.get('access_token')
+                    refresh = profile.get('refresh_token') or ''
+                    if access:
+                        expires_at = None
+                        try:
+                            exp_raw = profile.get('expires_at') or profile.get('token_expires_at') or profile.get('access_token_expires_at')
+                            if exp_raw:
+                                expires_at = int(float(exp_raw))
+                        except Exception:
+                            expires_at = None
+
+                        if not expires_at:
+                            exp = self._get_jwt_exp(access)
+                            if exp:
+                                expires_at = int(exp)
+                            else:
+                                try:
+                                    issue = int(profile.get('access_token_age', 0))
+                                    expires_at = issue + 3600
+                                except Exception:
+                                    expires_at = int(time.time()) + 3600
+                        self.tokens = {'access_token': access, 'refresh_token': refresh, 'expires_at': expires_at}
+        except Exception:
+            self.tokens = {}
+
+        # Merge in tokens from addon settings when available.
+        # This keeps refresh flow alive even if token files are missing.
+        try:
+            settings_tokens = self._load_tokens_from_settings()
+            if settings_tokens:
+                if not self.tokens:
+                    self.tokens = settings_tokens
+                else:
+                    for k, v in settings_tokens.items():
+                        if v and not self.tokens.get(k):
+                            self.tokens[k] = v
+        except Exception:
+            pass
+
+        self.opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(self.cookie_jar),
+            urllib.request.HTTPRedirectHandler(),
+        )
+        self.opener.addheaders = [('User-Agent', self.user_agent)]
+
+        # current access token (kept in memory for quick access)
+        self.token = self.tokens.get('access_token')
+        # If no access token but persistent NLZiet cookies exist, mark
+        # this session as a cookie-based session so callers can detect
+        # an authenticated cookie session after a Kodi restart.
+        if not self.token:
+            try:
+                for c in self.cookie_jar:
+                    dom = getattr(c, 'domain', '') or ''
+                    if 'nlziet' in dom.lower():
+                        self.token = 'cookie-session'
+                        break
+            except Exception:
+                pass
+
+    def _append_debug(self, text):
+        try:
+            # Only write HTTP debug logs when the debug toggle is enabled
+            try:
+                dbg_val = self.addon.getSetting('debug_http')
+            except Exception:
+                dbg_val = None
+            if not str(dbg_val or '').lower() in ('true', '1', 'yes'):
+                return
+
+            d = os.path.dirname(self.debug_file)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            with open(self.debug_file, 'a', encoding='utf-8') as f:
+                f.write(text + '\n')
+        except Exception:
+            pass
+
+    def _mask_secret(self, value, keep=8):
+        """Mask a secret value for debug logs while keeping a small hint."""
+        try:
+            s = str(value or '')
+            if not s:
+                return '<empty>'
+            if len(s) <= keep:
+                return '*' * len(s)
+            return s[:keep] + '...'
+        except Exception:
+            return '<masked>'
+
+    def _extract_code_from_url(self, url):
+        """Extract OAuth authorization code from URL query/fragment when present."""
+        try:
+            if not url:
+                return None
+            parsed = urllib.parse.urlparse(url)
+            q = urllib.parse.parse_qs(parsed.query)
+            if q.get('code'):
+                return q['code'][0]
+            frag = urllib.parse.parse_qs(parsed.fragment)
+            if frag.get('code'):
+                return frag['code'][0]
+        except Exception:
+            return None
+        return None
+
+    def _debug_auth_state(self, stage):
+        """Append a compact authentication/persistence state snapshot."""
+        try:
+            access = self.tokens.get('access_token') or ''
+            refresh = self.tokens.get('refresh_token') or ''
+            expires_at = self.tokens.get('expires_at')
+
+            try:
+                s_access = self.addon.getSetting('access_token') or ''
+                s_refresh = self.addon.getSetting('refresh_token') or ''
+                s_exp = self.addon.getSetting('token_expires_at') or ''
+            except Exception:
+                s_access = ''
+                s_refresh = ''
+                s_exp = ''
+
+            token_exists = os.path.exists(self.token_file)
+            profile_exists = os.path.exists(self.profile_file)
+            token_size = os.path.getsize(self.token_file) if token_exists else 0
+            profile_size = os.path.getsize(self.profile_file) if profile_exists else 0
+
+            cookie_names = []
+            try:
+                for c in self.cookie_jar:
+                    dom = (getattr(c, 'domain', '') or '').lower()
+                    if 'nlziet' in dom:
+                        cookie_names.append(getattr(c, 'name', '?'))
+                cookie_names = sorted(set(cookie_names))
+            except Exception:
+                cookie_names = []
+
+            self._append_debug(
+                "AUTH STATE [{}]: token_mem(access={}, refresh={}, exp={}) settings(access={}, refresh={}, exp={}) files(tokens={} {}B, profile={} {}B)".format(
+                    stage,
+                    bool(access),
+                    bool(refresh),
+                    str(expires_at) if expires_at else '',
+                    bool(s_access),
+                    bool(s_refresh),
+                    s_exp,
+                    token_exists,
+                    token_size,
+                    profile_exists,
+                    profile_size,
+                )
+            )
+            if cookie_names:
+                self._append_debug(f"AUTH STATE [{stage}] cookies: {cookie_names}")
+            if access:
+                self._append_debug(f"AUTH STATE [{stage}] access_hint={self._mask_secret(access)}")
+            if refresh:
+                self._append_debug(f"AUTH STATE [{stage}] refresh_hint={self._mask_secret(refresh)}")
+        except Exception:
+            pass
+
+    def _has_cookie_session(self):
+        """Return True when login session cookies indicate an active id.nlziet.nl session."""
+        try:
+            names = set()
+            for c in self.cookie_jar:
+                dom = (getattr(c, 'domain', '') or '').lower()
+                if 'nlziet' not in dom:
+                    continue
+                names.add((getattr(c, 'name', '') or '').lower())
+            return 'idsrv' in names or 'idsrv.session' in names
+        except Exception:
+            return False
+
+    def _open_with_opener(self, opener, req_or_url, timeout=20):
+        import io
+        import datetime
+
+        # normalize to Request
+        if isinstance(req_or_url, str):
+            req = urllib.request.Request(req_or_url)
+        else:
+            req = req_or_url
+
+        method = getattr(req, 'method', None) or ('POST' if getattr(req, 'data', None) else 'GET')
+        try:
+            url = req.get_full_url()
+        except Exception:
+            try:
+                url = req.full_url
+            except Exception:
+                url = str(req)
+
+        try:
+            req_headers = dict(req.header_items())
+        except Exception:
+            req_headers = {}
+
+        # Do not leak full auth/cookie values in debug output.
+        try:
+            safe_headers = {}
+            for hk, hv in req_headers.items():
+                key_l = str(hk).lower()
+                if key_l == 'authorization':
+                    safe_headers[hk] = 'Bearer <masked>'
+                elif key_l == 'cookie':
+                    names = []
+                    for part in str(hv).split(';'):
+                        part = part.strip()
+                        if '=' in part:
+                            names.append(part.split('=', 1)[0].strip())
+                    safe_headers[hk] = '; '.join(names) + (' [names-only]' if names else '')
+                else:
+                    safe_headers[hk] = hv
+            req_headers = safe_headers
+        except Exception:
+            pass
+
+        req_data = None
+        if getattr(req, 'data', None):
+            try:
+                if isinstance(req.data, (bytes, bytearray)):
+                    req_data = req.data.decode('utf-8', errors='ignore')
+                else:
+                    req_data = str(req.data)
+            except Exception:
+                req_data = '<non-decodable>'
+
+        # Mask sensitive form fields while keeping request-shape debugging.
+        try:
+            if req_data and isinstance(req_data, str):
+                ctype = ''
+                for hk, hv in req_headers.items():
+                    if str(hk).lower() == 'content-type':
+                        ctype = str(hv).lower()
+                        break
+                if 'application/x-www-form-urlencoded' in ctype:
+                    fields = urllib.parse.parse_qsl(req_data, keep_blank_values=True)
+                    if fields:
+                        sensitive = {
+                            'password',
+                            '__requestverificationtoken',
+                            'code_verifier',
+                            'code',
+                            'refresh_token',
+                            'access_token',
+                            'id_token',
+                        }
+                        masked = []
+                        for k, v in fields:
+                            if str(k).lower() in sensitive:
+                                masked.append((k, '<masked>'))
+                            else:
+                                masked.append((k, v))
+                        req_data = urllib.parse.urlencode(masked)
+        except Exception:
+            pass
+
+        self._append_debug(f"--- HTTP {method} {datetime.datetime.utcnow().isoformat()} ---")
+        self._append_debug(f"URL: {url}")
+        if req_headers:
+            try:
+                self._append_debug(f"Headers: {req_headers}")
+            except Exception:
+                pass
+        if req_data:
+            try:
+                snippet = req_data if len(req_data) <= 4000 else req_data[:4000] + '...'
+                self._append_debug(f"Data: {snippet}")
+            except Exception:
+                pass
+
+        try:
+            r = opener.open(req, timeout=timeout)
+        except urllib.error.HTTPError as he:
+            status = getattr(he, 'code', None)
+            try:
+                resp_headers = dict(he.headers) if he.headers else {}
+            except Exception:
+                resp_headers = {}
+            try:
+                body_bytes = he.read() or b''
+            except Exception:
+                body_bytes = b''
+            try:
+                body_text = body_bytes.decode('utf-8', errors='replace')
+            except Exception:
+                body_text = '<binary>'
+
+            self._append_debug(f"Status: {status}")
+            self._append_debug(f"Response headers: {resp_headers}")
+            if body_text:
+                try:
+                    self._append_debug(f"Response body: {body_text}")
+                except Exception:
+                    pass
+            self._append_debug("--- END ---")
+            raise
+        else:
+            try:
+                resp_bytes = r.read() or b''
+            except Exception:
+                resp_bytes = b''
+
+            try:
+                resp_status = r.getcode()
+            except Exception:
+                resp_status = None
+
+            try:
+                resp_headers = dict(r.getheaders())
+            except Exception:
+                try:
+                    resp_headers = dict(r.info())
+                except Exception:
+                    resp_headers = {}
+
+            try:
+                resp_text = resp_bytes.decode('utf-8', errors='replace')
+            except Exception:
+                resp_text = '<binary>'
+
+            self._append_debug(f"Status: {resp_status}")
+            self._append_debug(f"Response headers: {resp_headers}")
+            if resp_text:
+                try:
+                    snippet = resp_text if len(resp_text) <= 4000 else resp_text[:4000] + '...'
+                    self._append_debug(f"Response body: {snippet}")
+                except Exception:
+                    pass
+            self._append_debug("--- END ---")
+
+            class _RespWrapper(io.BytesIO):
+                def __init__(self, data, status, headers, url):
+                    super().__init__(data)
+                    self._status = status
+                    self._headers = headers or {}
+                    self._url = url
+
+                def getcode(self):
+                    return self._status
+
+                def geturl(self):
+                    return self._url
+
+                def info(self):
+                    class InfoObj:
+                        def __init__(self, headers):
+                            self._h = headers
+
+                        def get(self, k, default=None):
+                            return self._h.get(k, default)
+
+                        def items(self):
+                            return list(self._h.items())
+
+                    return InfoObj(self._headers)
+
+                def getheaders(self):
+                    return list(self._headers.items())
+
+                def getheader(self, name, default=None):
+                    return self._headers.get(name, default)
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    try:
+                        self.close()
+                    except Exception:
+                        pass
+
+            return _RespWrapper(resp_bytes, resp_status, resp_headers, url)
+
+    def get_movies(self, limit=999):
+        """Fetch recommended movies using the endpoint observed in the HAR."""
+        try:
+            url = f"{self.base_url}/v9/recommend/withcontext?contextName=recommendMovies&limit={limit}"
+            headers = {
+                'User-Agent': self.user_agent,
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': 'https://app.nlziet.nl/',
+                'Origin': 'https://app.nlziet.nl',
+                'nlziet-appname': 'WebApp',
+                'nlziet-appversion': '6.0.3',
+                'nlziet-devicecapabilities': 'LowLatency,FutureItems,favoriteChannels,MyList,placementTile',
+            }
+            token = self.get_access_token()
+            # If we have a cookie-session but no tokens yet, try to obtain tokens
+            if not token and getattr(self, 'token', None) == 'cookie-session':
+                try:
+                    tokens = self.perform_pkce_authorize_and_exchange()
+                    if tokens and tokens.get('access_token'):
+                        token = tokens.get('access_token')
+                except Exception:
+                    token = None
+
+            if token:
+                headers['Authorization'] = 'Bearer ' + token
+
+            # include active profile id when present (mirror other endpoints)
+            try:
+                if os.path.exists(self.profile_file):
+                    with open(self.profile_file, 'r', encoding='utf-8') as pf_f:
+                        pfj = json.load(pf_f)
+                    profile_id = pfj.get('profile_id') or pfj.get('profile') or pfj.get('id')
+                    if profile_id:
+                        headers['X-Profile-Id'] = str(profile_id)
+            except Exception:
+                pass
+
+            # debug: record headers being sent for troubleshooting
+            try:
+                self._append_debug(f"Search headers: {headers}")
+            except Exception:
+                pass
+            # include active profile id in handshake when known
+            try:
+                if os.path.exists(self.profile_file):
+                    with open(self.profile_file, 'r', encoding='utf-8') as pf_f:
+                        pfj = json.load(pf_f)
+                    profile_id = pfj.get('profile_id') or pfj.get('profile') or pfj.get('id')
+                    if profile_id:
+                        headers['X-Profile-Id'] = str(profile_id)
+            except Exception:
+                pass
+            req = urllib.request.Request(url, headers=headers)
+            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                data = json.load(r)
+            results = []
+            items = data.get('data') or data.get('results') or data.get('items') or []
+            for item in items:
+                src = item.get('item') if isinstance(item, dict) and item.get('item') else item.get('content') if isinstance(item, dict) and item.get('content') else item
+                if not isinstance(src, dict):
+                    continue
+                content_id = src.get('id') or src.get('contentId') or src.get('content_id')
+                title = src.get('title') or src.get('name') or (item.get('analytics') or {}).get('assetName')
+                # prefer explicit posterUrl, fall back to image dict
+                thumb = src.get('posterUrl') or (src.get('image') or {}).get('portraitUrl') or (src.get('image') or {}).get('landscapeUrl')
+                typ = src.get('type') or (item.get('content') or {}).get('type')
+                # include available description/subtitle when present so UI can show it without extra requests
+                desc = src.get('description') or src.get('plot') or src.get('summary') or ''
+                subtitle = src.get('subtitle') or src.get('subtitleText') or ''
+                # detect expiration/availability timestamps when present
+                expires_at = None
+                for key in ('availableTo', 'available_to', 'availableUntil', 'available_until', 'endDate', 'end_date', 'expiresAt', 'expires_at', 'expiration', 'validUntil', 'valid_until', 'availableToDate', 'available_to_date'):
+                    if isinstance(src, dict) and key in src and src.get(key):
+                        parsed = self._parse_timestamp(src.get(key))
+                        if parsed:
+                            expires_at = parsed
+                            break
+                if not expires_at:
+                    availability = src.get('availability') or src.get('availabilities') or src.get('availabilityRange') or src.get('availableRanges')
+                    if availability:
+                        if isinstance(availability, dict):
+                            for k in ('endDate', 'to', 'availableTo', 'end'):
+                                v = availability.get(k)
+                                if v:
+                                    parsed = self._parse_timestamp(v)
+                                    if parsed:
+                                        expires_at = parsed
+                                        break
+                        elif isinstance(availability, (list, tuple)):
+                            for a in availability:
+                                if isinstance(a, dict):
+                                    v = a.get('endDate') or a.get('to') or a.get('availableTo') or a.get('end')
+                                    if v:
+                                        parsed = self._parse_timestamp(v)
+                                        if parsed:
+                                            expires_at = parsed
+                                            break
+                if not expires_at:
+                    for k, v in src.items():
+                        try:
+                            if k and isinstance(k, str) and k.lower().endswith(('date', 'until', 'at')):
+                                parsed = self._parse_timestamp(v)
+                                if parsed:
+                                    expires_at = parsed
+                                    break
+                        except Exception:
+                            continue
+                expires_in = None
+                if expires_at:
+                    now = int(time.time())
+                    secs = expires_at - now
+                    if secs <= 0:
+                        expires_in = 'Expired'
+                    else:
+                        days = secs // 86400
+                        if days >= 1:
+                            expires_in = f'Expires in {days}d'
+                        else:
+                            hours = secs // 3600
+                            if hours >= 1:
+                                expires_in = f'Expires in {hours}h'
+                            else:
+                                minutes = max(1, secs // 60)
+                                expires_in = f'Expires in {minutes}m'
+                results.append({'id': content_id, 'title': title, 'thumb': thumb, 'type': typ, 'description': desc, 'subtitle': subtitle, 'posterUrl': thumb, 'expires_at': expires_at, 'expires_in': expires_in})
+            return results
+        except Exception as e:
+            xbmc.log(f"NLZiet get_movies error: {e}", xbmc.LOGERROR)
+            return []
+
+    def get_movie_genres(self):
+        """Return list of available movie genres/categories."""
+        return [
+            {'name': 'All', 'genre': None},
+            {'name': 'Action', 'genre': 'Action'},
+            {'name': 'Animation', 'genre': 'Animation'},
+            {'name': 'Comedy', 'genre': 'Comedy'},
+            {'name': 'Documentary', 'genre': 'Documentary'},
+            {'name': 'Drama', 'genre': 'Drama'},
+            {'name': 'Romance', 'genre': 'Romance'},
+            {'name': 'Sci-Fi', 'genre': 'SciFi'},
+            {'name': 'Thriller', 'genre': 'Thriller'},
+            {'name': 'Youth', 'genre': 'Youth'},
+        ]
+
+    def get_movies_by_genre(self, genre=None, limit=999, offset=0):
+        """Fetch movies filtered by genre.
+        
+        Args:
+            genre: Genre name (e.g., 'Action', 'Comedy', 'Drama'). If None, uses recommendMovies.
+            limit: Number of items to return
+            offset: Offset for pagination
+            
+        Returns:
+            List of movie items
+        """
+        try:
+            if genre:
+                url = f"{self.base_url}/v9/recommend/filtered?category=Movies&genre={genre}&limit={limit}&offset={offset}"
+            else:
+                url = f"{self.base_url}/v9/recommend/withcontext?contextName=recommendMovies&limit={limit}"
+            
+            headers = {
+                'User-Agent': self.user_agent,
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': 'https://app.nlziet.nl/',
+                'Origin': 'https://app.nlziet.nl',
+                'nlziet-appname': 'WebApp',
+                'nlziet-appversion': '6.0.3',
+                'nlziet-devicecapabilities': 'LowLatency,FutureItems,favoriteChannels,MyList,placementTile',
+            }
+            token = self.get_access_token()
+            if token:
+                headers['Authorization'] = 'Bearer ' + token
+            try:
+                if os.path.exists(self.profile_file):
+                    with open(self.profile_file, 'r', encoding='utf-8') as pf_f:
+                        pfj = json.load(pf_f)
+                    profile_id = pfj.get('profile_id') or pfj.get('profile') or pfj.get('id')
+                    if profile_id:
+                        headers['X-Profile-Id'] = str(profile_id)
+            except Exception:
+                pass
+
+            req = urllib.request.Request(url, headers=headers)
+            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                data = json.load(r)
+
+            items = data.get('data') or data.get('results') or data.get('items') or []
+
+            # Optional seasons metadata for mapping global episode numbers
+            # (e.g. "Afl. 7229") to season/local episode numbers when counts exist.
+            seasons_list = []
+            try:
+                content_container = data.get('content') if isinstance(data, dict) else None
+                cs = None
+                if isinstance(content_container, dict):
+                    cs = content_container.get('seasons') or content_container.get('seasonList') or content_container.get('season_list')
+                if not cs and isinstance(data.get('seasons'), list):
+                    cs = data.get('seasons')
+                if isinstance(cs, list) and cs:
+                    for s in cs:
+                        try:
+                            sid = s.get('id') or s.get('seasonId') or s.get('season_id') or s.get('season') or ''
+                            title_s = s.get('title') or s.get('name') or s.get('label') or (f"Season {sid}" if sid else '')
+                            ep_count = s.get('episodeCount') or s.get('episode_count') or None
+                            if ep_count is not None:
+                                try:
+                                    ep_count = int(ep_count)
+                                except Exception:
+                                    ep_count = None
+                            seasons_list.append({'id': sid or title_s, 'title': title_s, 'episode_count': ep_count, 'start': None, 'end': None})
+                        except Exception:
+                            continue
+                    running = 0
+                    for s in seasons_list:
+                        if s.get('episode_count'):
+                            s['start'] = running + 1
+                            s['end'] = running + s['episode_count']
+                            running = s['end']
+            except Exception:
+                seasons_list = []
+
+            results = []
+            for item in items:
+                src = item.get('content') if isinstance(item, dict) and item.get('content') else item.get('item') if isinstance(item, dict) and item.get('item') else item
+                if not isinstance(src, dict):
+                    continue
+                content_id = src.get('id') or src.get('contentId') or src.get('content_id')
+                title = src.get('title') or src.get('name') or (item.get('analytics') or {}).get('assetName')
+                thumb = src.get('posterUrl') or (src.get('image') or {}).get('portraitUrl') or (src.get('image') or {}).get('landscapeUrl')
+                desc = src.get('description') or src.get('plot') or src.get('summary') or ''
+                subtitle = src.get('subtitle') or src.get('subtitleText') or ''
+                typ = src.get('type') or 'Movie'
+                
+                # Detect expiration timestamps
+                expires_at = None
+                for key in ('availableTo', 'available_to', 'availableUntil', 'available_until', 'endDate', 'end_date', 'expiresAt', 'expires_at', 'expiration', 'validUntil', 'valid_until', 'availableToDate', 'available_to_date'):
+                    if isinstance(src, dict) and key in src and src.get(key):
+                        parsed = self._parse_timestamp(src.get(key))
+                        if parsed:
+                            expires_at = parsed
+                            break
+                if not expires_at:
+                    availability = src.get('availability') or src.get('availabilities') or src.get('availabilityRange') or src.get('availableRanges')
+                    if availability:
+                        if isinstance(availability, dict):
+                            for k in ('endDate', 'to', 'availableTo', 'end'):
+                                v = availability.get(k)
+                                if v:
+                                    parsed = self._parse_timestamp(v)
+                                    if parsed:
+                                        expires_at = parsed
+                                        break
+                        elif isinstance(availability, (list, tuple)):
+                            for a in availability:
+                                if isinstance(a, dict):
+                                    v = a.get('endDate') or a.get('to') or a.get('availableTo') or a.get('end')
+                                    if v:
+                                        parsed = self._parse_timestamp(v)
+                                        if parsed:
+                                            expires_at = parsed
+                                            break
+                expires_in = None
+                if expires_at:
+                    now = int(time.time())
+                    secs = expires_at - now
+                    if secs <= 0:
+                        expires_in = 'Expired'
+                    else:
+                        days = secs // 86400
+                        if days >= 1:
+                            expires_in = f'Expires in {days}d'
+                        else:
+                            hours = secs // 3600
+                            if hours >= 1:
+                                expires_in = f'Expires in {hours}h'
+                            else:
+                                minutes = max(1, secs // 60)
+                                expires_in = f'Expires in {minutes}m'
+                
+                results.append({'id': content_id, 'title': title, 'thumb': thumb, 'type': typ, 'description': desc, 'subtitle': subtitle, 'posterUrl': thumb, 'expires_at': expires_at, 'expires_in': expires_in})
+            return results
+        except Exception as e:
+            xbmc.log(f"NLZiet get_movies_by_genre error: {e}", xbmc.LOGERROR)
+            return []
+
+    def get_videos(self, limit=999):
+        """Fetch videos (TV shows) using the recommend/withContext endpoint.
+
+        Uses `contextName=allPopularPrograms` to fetch all popular TV shows.
+        
+        Note: May return both Episode items and Series items. Series need to be 
+        opened as folders showing seasons/episodes, not played directly.
+        """
+        try:
+            url = f"{self.base_url}/v9/recommend/withcontext?contextName=allPopularPrograms&limit={limit}"
+            headers = {
+                'User-Agent': self.user_agent,
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': 'https://app.nlziet.nl/',
+                'Origin': 'https://app.nlziet.nl',
+                'nlziet-appname': 'WebApp',
+                'nlziet-appversion': '6.0.3',
+                'nlziet-devicecapabilities': 'LowLatency,FutureItems,favoriteChannels,MyList,placementTile',
+            }
+            token = self.get_access_token()
+            if token:
+                headers['Authorization'] = 'Bearer ' + token
+            try:
+                if os.path.exists(self.profile_file):
+                    with open(self.profile_file, 'r', encoding='utf-8') as pf_f:
+                        pfj = json.load(pf_f)
+                    profile_id = pfj.get('profile_id') or pfj.get('profile') or pfj.get('id')
+                    if profile_id:
+                        headers['X-Profile-Id'] = str(profile_id)
+            except Exception:
+                pass
+
+            req = urllib.request.Request(url, headers=headers)
+            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                data = json.load(r)
+
+            items = data.get('data') or data.get('results') or data.get('items') or []
+
+            # Optional seasons metadata for mapping global episode numbers
+            # (e.g. "Afl. 7229") to season/local episode numbers when counts exist.
+            seasons_list = []
+            try:
+                content_container = data.get('content') if isinstance(data, dict) else None
+                cs = None
+                if isinstance(content_container, dict):
+                    cs = content_container.get('seasons') or content_container.get('seasonList') or content_container.get('season_list')
+                if not cs and isinstance(data.get('seasons'), list):
+                    cs = data.get('seasons')
+                if isinstance(cs, list) and cs:
+                    for s in cs:
+                        try:
+                            sid = s.get('id') or s.get('seasonId') or s.get('season_id') or s.get('season') or ''
+                            title_s = s.get('title') or s.get('name') or s.get('label') or (f"Season {sid}" if sid else '')
+                            ep_count = s.get('episodeCount') or s.get('episode_count') or None
+                            if ep_count is not None:
+                                try:
+                                    ep_count = int(ep_count)
+                                except Exception:
+                                    ep_count = None
+                            seasons_list.append({'id': sid or title_s, 'title': title_s, 'episode_count': ep_count, 'start': None, 'end': None})
+                        except Exception:
+                            continue
+                    running = 0
+                    for s in seasons_list:
+                        if s.get('episode_count'):
+                            s['start'] = running + 1
+                            s['end'] = running + s['episode_count']
+                            running = s['end']
+            except Exception:
+                seasons_list = []
+
+            results = []
+            for item in items:
+                src = item.get('content') if isinstance(item, dict) and item.get('content') else item.get('item') if isinstance(item, dict) and item.get('item') else item
+                if not isinstance(src, dict):
+                    continue
+                content_id = src.get('id') or src.get('contentId') or src.get('content_id')
+                title = src.get('title') or src.get('name') or (item.get('analytics') or {}).get('assetName')
+                # Prefer landscape thumbnail for series, portrait for episodes
+                img = src.get('image') or {}
+                thumb = src.get('posterUrl') or img.get('landscapeUrl') or img.get('portraitUrl')
+                desc = src.get('description') or src.get('plot') or src.get('summary') or ''
+                subtitle = src.get('subtitle') or src.get('subtitleText') or ''
+                typ = src.get('type') or 'Episode'
+                
+                results.append({'id': content_id, 'title': title, 'thumb': thumb, 'type': typ, 'description': desc, 'subtitle': subtitle, 'posterUrl': thumb})
+            return results
+        except Exception as e:
+            xbmc.log(f"NLZiet get_videos error: {e}", xbmc.LOGERROR)
+            return []
+
+    def get_tv_show_genres(self):
+        """Return list of available TV show genres/categories."""
+        return [
+            {'name': 'All', 'genre': None},
+            {'name': 'Amusement', 'genre': 'Amusement'},
+            {'name': 'Quiz', 'genre': 'Quiz'},
+            {'name': 'Reality', 'genre': 'Reality'},
+            {'name': 'Lifestyle', 'genre': 'Lifestyle'},
+            {'name': 'News', 'genre': 'News'},
+            {'name': 'Talkshow', 'genre': 'Talkshow'},
+            {'name': 'Human Interest', 'genre': 'HumanInterest'},
+            {'name': 'Art & Culture', 'genre': 'ArtCulture'},
+            {'name': 'Sports', 'genre': 'Sports'},
+            {'name': 'Consumer Information', 'genre': 'ConsumerInformation'},
+            {'name': 'Travel', 'genre': 'Travel'},
+            {'name': 'Culinary', 'genre': 'Culinary'},
+            {'name': 'Nature', 'genre': 'Nature'},
+            {'name': 'Music', 'genre': 'Music'},
+            {'name': 'Comedy', 'genre': 'Comedy'},
+            {'name': 'Health', 'genre': 'Health'},
+            {'name': 'Business', 'genre': 'Business'},
+        ]
+
+    def get_videos_by_genre(self, genre=None, limit=999, offset=0):
+        """Fetch videos (TV shows) filtered by genre.
+        
+        Args:
+            genre: Genre name (e.g., 'Amusement', 'Comedy'). If None, uses allPopularPrograms.
+            limit: Number of items to return
+            offset: Offset for pagination
+            
+        Returns:
+            List of video items
+        """
+        try:
+            if genre:
+                url = f"{self.base_url}/v9/recommend/filtered?category=Programs&genre={genre}&limit={limit}&offset={offset}"
+            else:
+                url = f"{self.base_url}/v9/recommend/withcontext?contextName=allPopularPrograms&limit={limit}"
+            
+            headers = {
+                'User-Agent': self.user_agent,
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': 'https://app.nlziet.nl/',
+                'Origin': 'https://app.nlziet.nl',
+                'nlziet-appname': 'WebApp',
+                'nlziet-appversion': '6.0.3',
+                'nlziet-devicecapabilities': 'LowLatency,FutureItems,favoriteChannels,MyList,placementTile',
+            }
+            token = self.get_access_token()
+            if token:
+                headers['Authorization'] = 'Bearer ' + token
+            try:
+                if os.path.exists(self.profile_file):
+                    with open(self.profile_file, 'r', encoding='utf-8') as pf_f:
+                        pfj = json.load(pf_f)
+                    profile_id = pfj.get('profile_id') or pfj.get('profile') or pfj.get('id')
+                    if profile_id:
+                        headers['X-Profile-Id'] = str(profile_id)
+            except Exception:
+                pass
+
+            req = urllib.request.Request(url, headers=headers)
+            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                data = json.load(r)
+
+            items = data.get('data') or data.get('results') or data.get('items') or []
+            results = []
+            for item in items:
+                src = item.get('content') if isinstance(item, dict) and item.get('content') else item.get('item') if isinstance(item, dict) and item.get('item') else item
+                if not isinstance(src, dict):
+                    continue
+                content_id = src.get('id') or src.get('contentId') or src.get('content_id')
+                title = src.get('title') or src.get('name') or (item.get('analytics') or {}).get('assetName')
+                img = src.get('image') or {}
+                thumb = src.get('posterUrl') or img.get('landscapeUrl') or img.get('portraitUrl')
+                desc = src.get('description') or src.get('plot') or src.get('summary') or ''
+                subtitle = src.get('subtitle') or src.get('subtitleText') or ''
+                typ = src.get('type') or 'Episode'
+                
+                # Detect expiration timestamps
+                expires_at = None
+                for key in ('availableTo', 'available_to', 'availableUntil', 'available_until', 'endDate', 'end_date', 'expiresAt', 'expires_at', 'expiration', 'validUntil', 'valid_until', 'availableToDate', 'available_to_date'):
+                    if isinstance(src, dict) and key in src and src.get(key):
+                        parsed = self._parse_timestamp(src.get(key))
+                        if parsed:
+                            expires_at = parsed
+                            break
+                if not expires_at:
+                    availability = src.get('availability') or src.get('availabilities') or src.get('availabilityRange') or src.get('availableRanges')
+                    if availability:
+                        if isinstance(availability, dict):
+                            for k in ('endDate', 'to', 'availableTo', 'end'):
+                                v = availability.get(k)
+                                if v:
+                                    parsed = self._parse_timestamp(v)
+                                    if parsed:
+                                        expires_at = parsed
+                                        break
+                        elif isinstance(availability, (list, tuple)):
+                            for a in availability:
+                                if isinstance(a, dict):
+                                    v = a.get('endDate') or a.get('to') or a.get('availableTo') or a.get('end')
+                                    if v:
+                                        parsed = self._parse_timestamp(v)
+                                        if parsed:
+                                            expires_at = parsed
+                                            break
+                expires_in = None
+                if expires_at:
+                    now = int(time.time())
+                    secs = expires_at - now
+                    if secs <= 0:
+                        expires_in = 'Expired'
+                    else:
+                        days = secs // 86400
+                        if days >= 1:
+                            expires_in = f'Expires in {days}d'
+                        else:
+                            hours = secs // 3600
+                            if hours >= 1:
+                                expires_in = f'Expires in {hours}h'
+                            else:
+                                minutes = max(1, secs // 60)
+                                expires_in = f'Expires in {minutes}m'
+                
+                # Extract date information (aired, broadcast, etc.)
+                aired_date = None
+                for key in ('aired', 'episodeAired', 'broadcastDate', 'broadcastAt', 'firstAired', 'productionDate', 'releaseDate', 'premiere', 'transmissionDate'):
+                    if isinstance(src, dict) and key in src and src.get(key):
+                        aired_date = src.get(key)
+                        break
+                
+                results.append({'id': content_id, 'title': title, 'thumb': thumb, 'type': typ, 'description': desc, 'subtitle': subtitle, 'posterUrl': thumb, 'expires_at': expires_at, 'expires_in': expires_in, 'aired_date': aired_date})
+            return results
+        except Exception as e:
+            xbmc.log(f"NLZiet get_videos_by_genre error: {e}", xbmc.LOGERROR)
+            return []
+
+    def get_series_genres(self):
+        """Return list of available Series genres/categories."""
+        return [
+            {'name': 'All', 'genre': None},
+            {'name': 'Comedy', 'genre': 'Comedy'},
+            {'name': 'Crime', 'genre': 'Crime'},
+            {'name': 'Drama', 'genre': 'Drama'},
+        ]
+
+    def get_series_by_genre(self, genre=None, limit=999, offset=0):
+        """Fetch series filtered by genre.
+        
+        Args:
+            genre: Genre name (e.g., 'Comedy', 'Crime', 'Drama'). If None, uses allPopularSeries.
+            limit: Number of items to return
+            offset: Offset for pagination
+            
+        Returns:
+            List of series items
+        """
+        try:
+            if genre:
+                url = f"{self.base_url}/v9/recommend/filtered?category=Series&genre={genre}&limit={limit}&offset={offset}"
+            else:
+                url = f"{self.base_url}/v9/recommend/withcontext?contextName=allPopularSeries&limit={limit}"
+            
+            headers = {
+                'User-Agent': self.user_agent,
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': 'https://app.nlziet.nl/',
+                'Origin': 'https://app.nlziet.nl',
+                'nlziet-appname': 'WebApp',
+                'nlziet-appversion': '6.0.3',
+                'nlziet-devicecapabilities': 'LowLatency,FutureItems,favoriteChannels,MyList,placementTile',
+            }
+            token = self.get_access_token()
+            if token:
+                headers['Authorization'] = 'Bearer ' + token
+            try:
+                if os.path.exists(self.profile_file):
+                    with open(self.profile_file, 'r', encoding='utf-8') as pf_f:
+                        pfj = json.load(pf_f)
+                    profile_id = pfj.get('profile_id') or pfj.get('profile') or pfj.get('id')
+                    if profile_id:
+                        headers['X-Profile-Id'] = str(profile_id)
+            except Exception:
+                pass
+
+            req = urllib.request.Request(url, headers=headers)
+            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                data = json.load(r)
+
+            items = data.get('data') or data.get('results') or data.get('items') or []
+            results = []
+            for item in items:
+                src = item.get('content') if isinstance(item, dict) and item.get('content') else item.get('item') if isinstance(item, dict) and item.get('item') else item
+                if not isinstance(src, dict):
+                    continue
+                content_id = src.get('id') or src.get('contentId') or src.get('content_id')
+                title = src.get('title') or src.get('name') or (item.get('analytics') or {}).get('assetName')
+                img = src.get('image') or {}
+                thumb = src.get('posterUrl') or img.get('portraitUrl') or img.get('landscapeUrl')
+                desc = src.get('description') or src.get('plot') or src.get('summary') or ''
+                subtitle = src.get('subtitle') or src.get('subtitleText') or ''
+                typ = src.get('type') or 'Series'
+                
+                # Detect expiration timestamps
+                expires_at = None
+                for key in ('availableTo', 'available_to', 'availableUntil', 'available_until', 'endDate', 'end_date', 'expiresAt', 'expires_at', 'expiration', 'validUntil', 'valid_until', 'availableToDate', 'available_to_date'):
+                    if isinstance(src, dict) and key in src and src.get(key):
+                        parsed = self._parse_timestamp(src.get(key))
+                        if parsed:
+                            expires_at = parsed
+                            break
+                if not expires_at:
+                    availability = src.get('availability') or src.get('availabilities') or src.get('availabilityRange') or src.get('availableRanges')
+                    if availability:
+                        if isinstance(availability, dict):
+                            for k in ('endDate', 'to', 'availableTo', 'end'):
+                                v = availability.get(k)
+                                if v:
+                                    parsed = self._parse_timestamp(v)
+                                    if parsed:
+                                        expires_at = parsed
+                                        break
+                        elif isinstance(availability, (list, tuple)):
+                            for a in availability:
+                                if isinstance(a, dict):
+                                    v = a.get('endDate') or a.get('to') or a.get('availableTo') or a.get('end')
+                                    if v:
+                                        parsed = self._parse_timestamp(v)
+                                        if parsed:
+                                            expires_at = parsed
+                                            break
+                expires_in = None
+                if expires_at:
+                    now = int(time.time())
+                    secs = expires_at - now
+                    if secs <= 0:
+                        expires_in = 'Expired'
+                    else:
+                        days = secs // 86400
+                        if days >= 1:
+                            expires_in = f'Expires in {days}d'
+                        else:
+                            hours = secs // 3600
+                            if hours >= 1:
+                                expires_in = f'Expires in {hours}h'
+                            else:
+                                minutes = max(1, secs // 60)
+                                expires_in = f'Expires in {minutes}m'
+                
+                results.append({'id': content_id, 'title': title, 'thumb': thumb, 'type': typ, 'description': desc, 'subtitle': subtitle, 'posterUrl': thumb, 'expires_at': expires_at, 'expires_in': expires_in})
+            return results
+        except Exception as e:
+            xbmc.log(f"NLZiet get_series_by_genre error: {e}", xbmc.LOGERROR)
+            return []
+
+
+
+    def get_documentaries(self, limit=999, offset=0):
+        """Fetch recommended Documentary series using the filtered recommend endpoint.
+
+        Uses: /v9/recommend/filtered?category=Programs&genre=Documentary&limit={limit}&offset={offset}
+        
+        Note: Documentaries are returned as Series items, not individual episodes.
+        The API wraps them in a 'content' field within the 'data' array.
+        """
+        try:
+            url = f"{self.base_url}/v9/recommend/filtered?category=Programs&genre=Documentary&limit={limit}&offset={offset}"
+            headers = {
+                'User-Agent': self.user_agent,
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': 'https://app.nlziet.nl/',
+                'Origin': 'https://app.nlziet.nl',
+                'nlziet-appname': 'WebApp',
+                'nlziet-appversion': '6.0.3',
+                'nlziet-devicecapabilities': 'LowLatency,FutureItems,favoriteChannels,MyList,placementTile',
+            }
+            token = self.get_access_token()
+            if token:
+                headers['Authorization'] = 'Bearer ' + token
+            try:
+                if os.path.exists(self.profile_file):
+                    with open(self.profile_file, 'r', encoding='utf-8') as pf_f:
+                        pfj = json.load(pf_f)
+                    profile_id = pfj.get('profile_id') or pfj.get('profile') or pfj.get('id')
+                    if profile_id:
+                        headers['X-Profile-Id'] = str(profile_id)
+            except Exception:
+                pass
+
+            req = urllib.request.Request(url, headers=headers)
+            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                data = json.load(r)
+
+            items = data.get('data') or data.get('results') or data.get('items') or []
+            results = []
+            for item in items:
+                # Documentaries are wrapped in a 'content' field
+                src = item.get('content') if isinstance(item, dict) and item.get('content') else item.get('item') if isinstance(item, dict) and item.get('item') else item
+                if not isinstance(src, dict):
+                    continue
+                
+                content_id = src.get('id')
+                # Skip items without an ID
+                if not content_id:
+                    continue
+                
+                title = src.get('title') or src.get('name') or (item.get('analytics') or {}).get('title')
+                # Prefer landscape thumbnail for series
+                img = src.get('image') or {}
+                thumb = src.get('posterUrl') or img.get('landscapeUrl') or img.get('portraitUrl')
+                desc = src.get('description') or src.get('plot') or src.get('summary') or ''
+                subtitle = src.get('subtitle') or src.get('subtitleText') or ''
+                typ = src.get('type') or 'Series'
+                
+                results.append({
+                    'id': content_id,
+                    'title': title,
+                    'thumb': thumb,
+                    'type': typ,
+                    'description': desc,
+                    'subtitle': subtitle,
+                    'posterUrl': thumb
+                })
+            return results
+        except Exception as e:
+            xbmc.log(f"NLZiet get_documentaries error: {e}", xbmc.LOGERROR)
+            return []
+
+
+    def get_customer_summary(self):
+        """Retrieve account summary from the customer API using bearer token."""
+        try:
+            token = self.get_access_token()
+            # If we have a cookie-session but no token yet, try to perform PKCE authorize+exchange
+            if not token and getattr(self, 'token', None) == 'cookie-session':
+                try:
+                    tokens = self.perform_pkce_authorize_and_exchange()
+                    if tokens and tokens.get('access_token'):
+                        token = tokens.get('access_token')
+                except Exception:
+                    token = None
+
+            if not token:
+                return {}
+
+            url = 'https://api.customer.nlziet.nl/customer/summary'
+            headers = {
+                'User-Agent': self.user_agent,
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': 'https://app.nlziet.nl/',
+                'Origin': 'https://app.nlziet.nl',
+                'Authorization': 'Bearer ' + token,
+            }
+            req = urllib.request.Request(url, headers=headers)
+            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                data = json.load(r)
+            return data or {}
+        except Exception as e:
+            xbmc.log(f"NLZiet get_customer_summary error: {e}", xbmc.LOGERROR)
+            return {}
+
+
+    def get_content_detail(self, content_id):
+        """Fetch content detail including description/plot for a given content id."""
+        if not content_id:
+            return {}
+        try:
+            url = urllib.parse.urljoin(self.base_url, f'/v9/content/detail/{content_id}')
+            headers = {
+                'User-Agent': self.user_agent,
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': 'https://app.nlziet.nl/',
+                'Origin': 'https://app.nlziet.nl',
+                'nlziet-appname': 'WebApp',
+                'nlziet-appversion': '6.0.3',
+            }
+            token = self.get_access_token()
+            if token:
+                headers['Authorization'] = 'Bearer ' + token
+            # Debug: record the constructed episodes URL and headers
+            try:
+                self._append_debug(f"get_series_episodes request URL: {url}")
+                self._append_debug(f"get_series_episodes headers: {headers}")
+            except Exception:
+                pass
+            req = urllib.request.Request(url, headers=headers)
+            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                data = json.load(r)
+            items = data.get('data') or []
+            if not items:
+                return {}
+            first = items[0]
+            content = first.get('content') if isinstance(first, dict) and first.get('content') else first
+            if not isinstance(content, dict):
+                content = {}
+            desc = ''
+            try:
+                desc = content.get('description') or content.get('plot') or ''
+            except Exception:
+                desc = ''
+            thumb = None
+            try:
+                img = content.get('image') or {}
+                thumb = content.get('posterUrl') or img.get('portraitUrl') or img.get('landscapeUrl') or None
+            except Exception:
+                thumb = None
+            title = content.get('title') or (first.get('title') if isinstance(first, dict) else '') or ''
+            # detect expiry for detailed content when available
+            expires_at = None
+            for key in ('availableTo', 'available_to', 'availableUntil', 'available_until', 'endDate', 'end_date', 'expiresAt', 'expires_at', 'expiration', 'validUntil', 'valid_until', 'availableToDate', 'available_to_date'):
+                if isinstance(content, dict) and key in content and content.get(key):
+                    parsed = self._parse_timestamp(content.get(key))
+                    if parsed:
+                        expires_at = parsed
+                        break
+            if not expires_at:
+                availability = content.get('availability') or content.get('availabilities') or content.get('availabilityRange')
+                if availability:
+                    if isinstance(availability, dict):
+                        for k in ('endDate', 'to', 'availableTo', 'end'):
+                            v = availability.get(k)
+                            if v:
+                                parsed = self._parse_timestamp(v)
+                                if parsed:
+                                    expires_at = parsed
+                                    break
+                    elif isinstance(availability, (list, tuple)):
+                        for a in availability:
+                            if isinstance(a, dict):
+                                v = a.get('endDate') or a.get('to') or a.get('availableTo') or a.get('end')
+                                if v:
+                                    parsed = self._parse_timestamp(v)
+                                    if parsed:
+                                        expires_at = parsed
+                                        break
+            expires_in = None
+            if expires_at:
+                now = int(time.time())
+                secs = expires_at - now
+                if secs <= 0:
+                    expires_in = 'Expired'
+                else:
+                    days = secs // 86400
+                    if days >= 1:
+                        expires_in = f'Expires in {days}d'
+                    else:
+                        hours = secs // 3600
+                        if hours >= 1:
+                            expires_in = f'Expires in {hours}h'
+                        else:
+                            minutes = max(1, secs // 60)
+                            expires_in = f'Expires in {minutes}m'
+            return {'id': content_id, 'title': title, 'description': desc, 'thumb': thumb, 'raw': content, 'expires_at': expires_at, 'expires_in': expires_in}
+        except Exception:
+            return {}
+
+
+    def save_cookies(self):
+        try:
+            self.cookie_jar.save(self.cookie_file, ignore_discard=True, ignore_expires=True)
+        except Exception:
+            pass
+
+    def save_tokens(self):
+        saved_any = False
+        try:
+            self._append_debug(
+                "save_tokens start: access={} refresh={} expires_at={}".format(
+                    bool(self.tokens.get('access_token')),
+                    bool(self.tokens.get('refresh_token')),
+                    str(self.tokens.get('expires_at') or ''),
+                )
+            )
+        except Exception:
+            pass
+
+        try:
+            d = os.path.dirname(self.token_file)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            with open(self.token_file, 'w', encoding='utf-8') as f:
+                json.dump(self.tokens, f)
+            saved_any = True
+        except Exception as e:
+            try:
+                xbmc.log(f"NLZiet save_tokens token_file write failed: {e}", xbmc.LOGWARNING)
+            except Exception:
+                pass
+
+        try:
+            if self._save_tokens_to_profile():
+                saved_any = True
+        except Exception:
+            pass
+
+        try:
+            self._save_token_settings()
+            saved_any = True
+        except Exception:
+            pass
+
+        try:
+            token_exists = os.path.exists(self.token_file)
+            profile_exists = os.path.exists(self.profile_file)
+            token_size = os.path.getsize(self.token_file) if token_exists else 0
+            profile_size = os.path.getsize(self.profile_file) if profile_exists else 0
+            self._append_debug(
+                f"save_tokens done: saved_any={saved_any} token_file={token_exists}({token_size}B) profile_file={profile_exists}({profile_size}B)"
+            )
+            self._debug_auth_state('after_save_tokens')
+        except Exception:
+            pass
+
+        return saved_any
+
+    def _save_tokens_to_profile(self):
+        """Mirror token fields into profile.json as fallback persistence."""
+        try:
+            payload = {}
+            try:
+                if os.path.exists(self.profile_file):
+                    with open(self.profile_file, 'r', encoding='utf-8') as f:
+                        existing = json.load(f)
+                    if isinstance(existing, dict):
+                        payload.update(existing)
+            except Exception:
+                payload = {}
+
+            access = self.tokens.get('access_token')
+            refresh = self.tokens.get('refresh_token')
+            expires_at = self.tokens.get('expires_at')
+
+            if access:
+                payload['access_token'] = access
+            else:
+                payload.pop('access_token', None)
+
+            if refresh:
+                payload['refresh_token'] = refresh
+            else:
+                payload.pop('refresh_token', None)
+
+            if expires_at:
+                try:
+                    exp_i = int(expires_at)
+                except Exception:
+                    exp_i = None
+                if exp_i:
+                    payload['expires_at'] = exp_i
+                    payload['token_expires_at'] = exp_i
+                    payload['access_token_age'] = int(time.time())
+            else:
+                payload.pop('expires_at', None)
+                payload.pop('token_expires_at', None)
+
+            d = os.path.dirname(self.profile_file)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            with open(self.profile_file, 'w', encoding='utf-8') as f:
+                json.dump(payload, f)
+            return True
+        except Exception as e:
+            try:
+                xbmc.log(f"NLZiet save_tokens profile_file write failed: {e}", xbmc.LOGWARNING)
+            except Exception:
+                pass
+            return False
+
+    def _save_token_settings(self):
+        """Persist token fields to addon settings for session continuity."""
+        try:
+            access = self.tokens.get('access_token') or ''
+            refresh = self.tokens.get('refresh_token') or ''
+            expires_at = self.tokens.get('expires_at')
+            self.addon.setSetting('access_token', str(access) if access else '')
+            self.addon.setSetting('refresh_token', str(refresh) if refresh else '')
+            self.addon.setSetting('token_expires_at', str(int(expires_at)) if expires_at else '')
+        except Exception:
+            pass
+
+    def _load_tokens_from_settings(self):
+        """Load token fields from addon settings as a fallback."""
+        try:
+            access = self.addon.getSetting('access_token') or ''
+            refresh = self.addon.getSetting('refresh_token') or ''
+            expires_raw = self.addon.getSetting('token_expires_at') or ''
+        except Exception:
+            return {}
+
+        expires_at = None
+        if expires_raw:
+            try:
+                expires_at = int(float(expires_raw))
+            except Exception:
+                expires_at = None
+
+        out = {}
+        if access:
+            out['access_token'] = access
+        if refresh:
+            out['refresh_token'] = refresh
+        if expires_at:
+            out['expires_at'] = expires_at
+        return out
+
+    # --- My List: local persistence fallback ---------------------------------
+    def _save_my_list(self, items):
+        try:
+            # ensure directory exists
+            d = os.path.dirname(self.mylist_file)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            with open(self.mylist_file, 'w', encoding='utf-8') as f:
+                json.dump(items or [], f, ensure_ascii=False, indent=2)
+            return True
+        except Exception:
+            try:
+                self._append_debug(f"Failed to save mylist: {traceback.format_exc()}")
+            except Exception:
+                pass
+            return False
+
+    def get_my_list(self):
+        """Return the locally-stored My List (list of item dicts).
+
+        This implementation uses a local JSON file as a fallback so the
+        add/remove My List UI works even when a server-side My List
+        endpoint is not implemented or accessible.
+        """
+        try:
+            if os.path.exists(self.mylist_file):
+                with open(self.mylist_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f) or []
+                if isinstance(data, list):
+                    return data
+                # support older formats where items nested under a key
+                if isinstance(data, dict) and 'items' in data and isinstance(data['items'], list):
+                    return data['items']
+        except Exception:
+            try:
+                self._append_debug(f"Failed to load mylist: {traceback.format_exc()}")
+            except Exception:
+                pass
+        return []
+
+    def is_in_my_list(self, content_id):
+        try:
+            if not content_id:
+                return False
+            items = self.get_my_list() or []
+            for it in items:
+                try:
+                    if str(it.get('id')) == str(content_id):
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return False
+
+    def add_to_my_list(self, item):
+        """Add a normalized item to the local My List. Returns True on success."""
+        try:
+            if not item or not isinstance(item, dict):
+                return False
+            cid = item.get('id') or item.get('contentId') or item.get('content_id')
+            if not cid:
+                return False
+            items = self.get_my_list() or []
+            # already present?
+            for it in items:
+                try:
+                    if str(it.get('id')) == str(cid):
+                        return True
+                except Exception:
+                    continue
+
+            normalized = {
+                'id': cid,
+                'title': item.get('title') or item.get('name') or '',
+                'type': item.get('type') or item.get('contentType') or '',
+                'posterUrl': item.get('posterUrl') or item.get('thumb') or item.get('poster') or None,
+                'raw': item,
+            }
+            items.append(normalized)
+            return self._save_my_list(items)
+        except Exception:
+            try:
+                self._append_debug(f"add_to_my_list exception: {traceback.format_exc()}")
+            except Exception:
+                pass
+            return False
+
+    def remove_from_my_list(self, content_id):
+        """Remove an item from local My List by id. Returns True if removed."""
+        try:
+            if not content_id:
+                return False
+            items = self.get_my_list() or []
+            new_items = [it for it in items if str(it.get('id')) != str(content_id)]
+            if len(new_items) == len(items):
+                # nothing removed
+                return False
+            return self._save_my_list(new_items)
+        except Exception:
+            try:
+                self._append_debug(f"remove_from_my_list exception: {traceback.format_exc()}")
+            except Exception:
+                pass
+            return False
+
+    # --- End My List --------------------------------------------------------
+
+    def exchange_code_for_tokens(self, code, code_verifier, redirect_uri='https://app.nlziet.nl/callback', scope=None):
+        url = 'https://id.nlziet.nl/connect/token'
+        try:
+            self._append_debug(
+                "TOKEN exchange start: code={} verifier_len={} redirect_uri={} scope={}".format(
+                    self._mask_secret(code),
+                    len(code_verifier or ''),
+                    redirect_uri,
+                    scope or '<default>',
+                )
+            )
+        except Exception:
+            pass
+
+        headers = {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json',
+            'User-Agent': self.user_agent,
+            'Origin': 'https://app.nlziet.nl',
+            'Referer': 'https://app.nlziet.nl/',
+        }
+
+        def _request_token(scope_value=None):
+            post = {
+                'grant_type': 'authorization_code',
+                'redirect_uri': redirect_uri,
+                'code': code,
+                'code_verifier': code_verifier,
+                'client_id': 'triple-web',
+            }
+            if scope_value:
+                post['scope'] = scope_value
+
+            data = urllib.parse.urlencode(post).encode('utf-8')
+            req = urllib.request.Request(url, data=data, headers=headers)
+            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                return json.load(r)
+
+        resp = None
+        if scope:
+            try:
+                resp = _request_token(scope)
+            except Exception:
+                try:
+                    self._append_debug('TOKEN exchange scoped request failed; retrying without scope')
+                except Exception:
+                    pass
+
+        if resp is None:
+            resp = _request_token(None)
+
+        try:
+            self._append_debug(
+                "TOKEN exchange response: keys={} has_access={} has_refresh={} expires_in={}".format(
+                    list(resp.keys()) if isinstance(resp, dict) else [],
+                    bool((resp or {}).get('access_token')),
+                    bool((resp or {}).get('refresh_token')),
+                    (resp or {}).get('expires_in'),
+                )
+            )
+        except Exception:
+            pass
+
+        try:
+            if scope and 'offline_access' in str(scope) and not (resp or {}).get('refresh_token'):
+                self._append_debug(
+                    "TOKEN exchange: offline_access requested but no refresh_token returned (granted_scope={})".format(
+                        (resp or {}).get('scope')
+                    )
+                )
+        except Exception:
+            pass
+
+        now = int(time.time())
+        expires_in = int(resp.get('expires_in', 0) or 0)
+        # capture potential fallback profile id returned by the token endpoint
+        fallback_profile = resp.get('fallbackProfileId') or resp.get('fallback_profile_id') or resp.get('fallbackProfile')
+        self.tokens = {
+            'access_token': resp.get('access_token'),
+            'refresh_token': resp.get('refresh_token'),
+            'id_token': resp.get('id_token'),
+            'token_type': resp.get('token_type'),
+            'scope': resp.get('scope'),
+            'expires_at': now + expires_in,
+        }
+        if fallback_profile:
+            self.tokens['fallback_profile_id'] = fallback_profile
+        saved = self.save_tokens()
+        try:
+            self._append_debug(f"TOKEN exchange persisted: save_tokens={saved}")
+            self._debug_auth_state('after_exchange_code_for_tokens')
+        except Exception:
+            pass
+        self.token = self.tokens.get('access_token')
+        return self.tokens
+
+    def refresh_tokens(self, fallback_to_login=True):
+        """Refresh tokens using the refresh_token.
+        
+        Args:
+            fallback_to_login: If True, trigger logout(keep_mylist)+login flow on refresh failure.
+            
+        Returns:
+            Updated tokens dict on success, None on failure
+        """
+        refresh_token = self.tokens.get('refresh_token')
+        if not refresh_token:
+            try:
+                refresh_token = (self.addon.getSetting('refresh_token') or '').strip()
+            except Exception:
+                refresh_token = ''
+            if refresh_token:
+                self.tokens['refresh_token'] = refresh_token
+
+        if not refresh_token:
+            # Fallback for sessions where the IdP does not return refresh_token
+            # but we still have valid login cookies.
+            if self._has_cookie_session():
+                try:
+                    self._append_debug('refresh_tokens: no refresh_token; attempting cookie-based PKCE renewal')
+                except Exception:
+                    pass
+                try:
+                    tokens = self.perform_pkce_authorize_and_exchange()
+                    if tokens and tokens.get('access_token'):
+                        self._refresh_failure_handled = False
+                        return tokens
+                except Exception:
+                    pass
+
+            # No refresh token means we cannot safely recover this session.
+            if fallback_to_login:
+                self._handle_refresh_failure('missing_refresh_token')
+            return None
+        
+        url = 'https://id.nlziet.nl/connect/token'
+        post = {
+            'grant_type': 'refresh_token',
+            'refresh_token': refresh_token,
+            'client_id': 'triple-web',
+        }
+        data = urllib.parse.urlencode(post).encode('utf-8')
+        headers = {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json',
+            'User-Agent': self.user_agent,
+            'Origin': 'https://app.nlziet.nl',
+            'Referer': 'https://app.nlziet.nl/',
+        }
+        req = urllib.request.Request(url, data=data, headers=headers)
+        try:
+            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                resp = json.load(r)
+        except Exception:
+            # Refresh failed (e.g. revoked token or changed account password).
+            if fallback_to_login:
+                self._handle_refresh_failure('refresh_request_failed')
+            return None
+
+        now = int(time.time())
+        expires_in = int(resp.get('expires_in', 0) or 0)
+        if not resp.get('access_token'):
+            if fallback_to_login:
+                self._handle_refresh_failure('refresh_response_missing_access_token')
+            return None
+        self.tokens.update({
+            'access_token': resp.get('access_token'),
+            'refresh_token': resp.get('refresh_token', refresh_token),
+            'id_token': resp.get('id_token'),
+            'token_type': resp.get('token_type'),
+            'scope': resp.get('scope'),
+            'expires_at': now + expires_in,
+        })
+        self.save_tokens()
+        self.token = self.tokens.get('access_token')
+        self._refresh_failure_handled = False
+        return self.tokens
+
+    def _handle_refresh_failure(self, reason='refresh_failed'):
+        """Clear auth state and trigger logout+relogin flow while keeping My List."""
+        if getattr(self, '_refresh_failure_handled', False):
+            return
+        self._refresh_failure_handled = True
+
+        try:
+            xbmc.log(f"NLZiet: refresh handling triggered ({reason})", xbmc.LOGWARNING)
+        except Exception:
+            pass
+
+        # Clear current auth state immediately so callers cannot continue
+        # using stale or potentially invalid credentials.
+        try:
+            self.tokens = {}
+            self.token = None
+            self.save_tokens()
+        except Exception:
+            pass
+
+        try:
+            addon_id = self.addon.getAddonInfo('id')
+            logout_url = f"plugin://{addon_id}/?mode=logout_keep_mylist"
+            login_url = f"plugin://{addon_id}/?mode=login"
+            xbmc.executebuiltin('Notification(NLZiet,Session expired. Please login again,5000)')
+            xbmc.executebuiltin(f"RunPlugin({logout_url})")
+            xbmc.executebuiltin(f"RunPlugin({login_url})")
+        except Exception:
+            pass
+
+    def is_token_valid(self):
+        """Check if we have a valid (non-expired) access token.
+        
+        Returns:
+            True if token exists and is not expired (with 60sec buffer), False otherwise
+        """
+        token = self.tokens.get('access_token')
+        if not token:
+            # Check for cookie-based session
+            if self.token == 'cookie-session':
+                return True
+            return False
+        
+        expires_at = self.tokens.get('expires_at')
+        if not expires_at:
+            return True  # No expiry info, assume valid
+
+        # Apply a 60s safety buffer to avoid mid-request expiry.
+        current_time = int(time.time())
+        return not (current_time > (int(expires_at) - 60))
+
+    def get_valid_token(self):
+        """Return a valid access token, refreshing when needed.
+
+        Passive callers (menus/background refresh) should not trigger interactive
+        login flows when no refresh token exists; in that case we simply return
+        None and let the UI show the Login entry.
+        """
+        token = self.tokens.get('access_token')
+        expires_at = self.tokens.get('expires_at')
+
+        if token:
+            try:
+                current_time = int(time.time())
+                if expires_at and not (current_time > (int(expires_at) - 60)):
+                    return token
+            except Exception:
+                pass
+
+            # Try deriving expiry from JWT when not explicitly stored.
+            if not expires_at:
+                try:
+                    jwt_exp = self._get_jwt_exp(token)
+                    if jwt_exp:
+                        self.tokens['expires_at'] = int(jwt_exp)
+                        self.save_tokens()
+                        current_time = int(time.time())
+                        if not (current_time > (int(jwt_exp) - 60)):
+                            return token
+                except Exception:
+                    pass
+
+        refresh_token = self.tokens.get('refresh_token')
+        if not refresh_token:
+            try:
+                refresh_token = (self.addon.getSetting('refresh_token') or '').strip()
+            except Exception:
+                refresh_token = ''
+
+        # Sessions may be token-only (no refresh token). In that case, attempt
+        # silent cookie-based PKCE renewal before giving up.
+        if not refresh_token:
+            if self._has_cookie_session() or getattr(self, 'token', None) == 'cookie-session':
+                try:
+                    self._append_debug('get_valid_token: no refresh_token; attempting cookie-based PKCE renewal')
+                except Exception:
+                    pass
+                try:
+                    renewed = self.perform_pkce_authorize_and_exchange()
+                    if renewed and renewed.get('access_token'):
+                        return renewed.get('access_token')
+                except Exception:
+                    pass
+            # If no access token and no refresh token/cookie renewal, user is logged out.
+            return None
+
+        # Keep refresh failures non-interactive for passive callers.
+        refreshed = self.refresh_tokens(fallback_to_login=False)
+        if refreshed and refreshed.get('access_token'):
+            # If a profile was previously active, attempt to obtain a profile-scoped token
+            profile_id = refreshed.get('profile_id') or self.tokens.get('profile_id')
+            if not profile_id:
+                try:
+                    if os.path.exists(self.profile_file):
+                        with open(self.profile_file, 'r', encoding='utf-8') as pf:
+                            pfj = json.load(pf)
+                        profile_id = pfj.get('profile_id') or pfj.get('profile') or pfj.get('id')
+                except Exception:
+                    profile_id = None
+
+            if profile_id:
+                try:
+                    prof_tokens = self.select_profile(profile_id)
+                    if prof_tokens and prof_tokens.get('access_token'):
+                        return prof_tokens.get('access_token')
+                except Exception:
+                    pass
+
+            return refreshed.get('access_token')
+
+        return None
+
+    def get_access_token(self):
+        # Backward-compatible alias used throughout the addon.
+        return self.get_valid_token()
+
+    def perform_pkce_authorize_and_exchange(self, redirect_uri='https://app.nlziet.nl/callback'):
+        """Perform an authorize (PKCE) request using the addon's cookie session and exchange the returned code for tokens.
+
+        This generates a code_verifier/code_challenge pair, calls the authorize endpoint with the current cookies,
+        extracts the authorization code from the redirect and performs the token exchange.
+        Returns the token dict on success or None on failure.
+        """
+        try:
+            import base64, hashlib, secrets
+            # generate PKCE pair (43-character verifier per RFC 7636 minimum)
+            code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b'=').decode('ascii')
+            code_challenge = base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode('ascii')).digest()).rstrip(b'=').decode('ascii')
+            state = secrets.token_hex(16)
+
+            try:
+                self._append_debug(
+                    f"PKCE start: redirect_uri={redirect_uri} state={state[:8]}... challenge_len={len(code_challenge)}"
+                )
+                self._debug_auth_state('pkce_start')
+            except Exception:
+                pass
+
+            # Prefer offline_access first so we can obtain refresh_token when
+            # the IdP permits it, then fall back to web-app scope.
+            scope_candidates = []
+            for scope_val in ('openid api offline_access', 'openid api'):
+                if scope_val and scope_val not in scope_candidates:
+                    scope_candidates.append(scope_val)
+
+            class NoRedirect(urllib.request.HTTPRedirectHandler):
+                def redirect_request(self, req, fp, code, msg, headers, newurl):
+                    return None
+
+            def _attempt_authorize(auth_url, label):
+                opener_no = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.cookie_jar), NoRedirect())
+                opener_no.addheaders = [('User-Agent', self.user_agent)]
+                req = urllib.request.Request(auth_url, headers={'User-Agent': self.user_agent, 'Accept': 'text/html'})
+
+                try:
+                    self._append_debug(f"PKCE {label}: request={auth_url}")
+                except Exception:
+                    pass
+
+                code_local = None
+                try:
+                    resp = self._open_with_opener(opener_no, req, timeout=20)
+                    loc = resp.getheader('Location')
+                    status = resp.getcode()
+                    self._append_debug(f"PKCE {label}: no-redirect status={status} location={loc}")
+                    code_local = self._extract_code_from_url(loc)
+                    if code_local:
+                        return code_local
+                except urllib.error.HTTPError as e:
+                    loc = e.headers.get('Location') if e.headers else None
+                    self._append_debug(f"PKCE {label}: no-redirect HTTPError status={e.code} location={loc}")
+                    code_local = self._extract_code_from_url(loc)
+                    if code_local:
+                        return code_local
+                except Exception:
+                    self._append_debug(f"PKCE {label}: no-redirect exception: {traceback.format_exc()}")
+
+                opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.cookie_jar), urllib.request.HTTPRedirectHandler())
+                opener.addheaders = [('User-Agent', self.user_agent)]
+                try:
+                    resp2 = self._open_with_opener(opener, req, timeout=20)
+                    final = resp2.geturl()
+                    self._append_debug(f"PKCE {label}: redirect-follow final_url={final}")
+                    code_local = self._extract_code_from_url(final)
+                    if code_local:
+                        return code_local
+
+                    # when no code, dump a tiny body preview/title for error diagnosis
+                    body_preview = ''
+                    try:
+                        body_preview = (resp2.read(700) or b'').decode('utf-8', errors='ignore')
+                    except Exception:
+                        body_preview = ''
+                    if body_preview:
+                        try:
+                            t = re.search(r'<title>(.*?)</title>', body_preview, re.I | re.S)
+                            if t:
+                                self._append_debug(f"PKCE {label}: page title={t.group(1).strip()}")
+                        except Exception:
+                            pass
+                        snippet = ' '.join(body_preview.split())[:500]
+                        self._append_debug(f"PKCE {label}: body preview={snippet}")
+                except Exception:
+                    self._append_debug(f"PKCE {label}: redirect-follow exception: {traceback.format_exc()}")
+
+                return None
+
+            code_val = None
+            used_label = None
+            used_scope = None
+            for scope_val in scope_candidates:
+                try:
+                    self._append_debug(f"PKCE scope attempt: {scope_val}")
+                except Exception:
+                    pass
+
+                params = {
+                    'client_id': 'triple-web',
+                    'redirect_uri': redirect_uri,
+                    'response_type': 'code',
+                    'scope': scope_val,
+                    'state': state,
+                    'code_challenge': code_challenge,
+                    'code_challenge_method': 'S256'
+                }
+                qs = urllib.parse.urlencode(params, safe='')
+                auth_urls = [
+                    ('authorize_callback', 'https://id.nlziet.nl/connect/authorize/callback' + '?' + qs),
+                    ('authorize', 'https://id.nlziet.nl/connect/authorize' + '?' + qs),
+                ]
+
+                for label, auth_url in auth_urls:
+                    code_val = _attempt_authorize(auth_url, f"{label}[{scope_val}]")
+                    if code_val:
+                        used_label = label
+                        used_scope = scope_val
+                        break
+                if code_val:
+                    break
+
+            if not code_val:
+                try:
+                    self._append_debug(
+                        "PKCE failed: no authorization code extracted from authorize endpoints (scopes tried: {})".format(
+                            scope_candidates
+                        )
+                    )
+                    self._debug_auth_state('pkce_no_code')
+                except Exception:
+                    pass
+                return None
+
+            try:
+                self._append_debug(
+                    f"PKCE code obtained via {used_label} scope={used_scope}: {self._mask_secret(code_val)}"
+                )
+            except Exception:
+                pass
+
+            # exchange: obtain initial tokens
+            tokens = self.exchange_code_for_tokens(
+                code_val,
+                code_verifier,
+                redirect_uri=redirect_uri,
+                scope=used_scope,
+            )
+            try:
+                self._append_debug(
+                    "PKCE token exchange result: access={} refresh={}".format(
+                        bool((tokens or {}).get('access_token')),
+                        bool((tokens or {}).get('refresh_token')),
+                    )
+                )
+                self._debug_auth_state('pkce_after_exchange')
+            except Exception:
+                pass
+
+            if tokens:
+                # attempt to select a profile (profile-grant) to obtain a profile-scoped token
+                try:
+                    stored_profile_id = None
+                    if os.path.exists(self.profile_file):
+                        with open(self.profile_file, 'r', encoding='utf-8') as f:
+                            pf = json.load(f)
+                        stored_profile_id = pf.get('profile_id') or pf.get('profile') or None
+                except Exception:
+                    stored_profile_id = None
+                prof_tokens = None
+                try:
+                    prof_tokens = self.select_profile(stored_profile_id)
+                    if prof_tokens:
+                        try:
+                            self._append_debug("PKCE profile select success using stored profile")
+                            self._debug_auth_state('pkce_after_profile_select')
+                        except Exception:
+                            pass
+                        return prof_tokens
+                except Exception:
+                    try:
+                        self._append_debug(f"PKCE profile select exception (stored profile): {traceback.format_exc()}")
+                    except Exception:
+                        pass
+                    prof_tokens = None
+
+                # fallback: if profile switch failed, try the fallbackProfileId returned
+                # by the initial token response (if present)
+                if not prof_tokens:
+                    fb = tokens.get('fallback_profile_id') or self.tokens.get('fallback_profile_id')
+                    if fb:
+                        try:
+                            self._append_debug(f"PKCE attempting fallback profile switch: {fb}")
+                            prof_tokens = self.select_profile(fb)
+                            if prof_tokens:
+                                try:
+                                    self._append_debug("PKCE profile select success using fallback profile")
+                                    self._debug_auth_state('pkce_after_fallback_profile_select')
+                                except Exception:
+                                    pass
+                                return prof_tokens
+                        except Exception:
+                            try:
+                                self._append_debug(f"PKCE profile select exception (fallback profile): {traceback.format_exc()}")
+                            except Exception:
+                                pass
+                            pass
+            return tokens
+        except Exception:
+            try:
+                self._append_debug(f"PKCE exception: {traceback.format_exc()}")
+            except Exception:
+                pass
+            return None
+
+    def _get_csrf_token(self, html):
+        m = re.search(r'name=["\']__RequestVerificationToken["\'][^>]*value=["\']([^"\']+)["\']', html)
+        return m.group(1) if m else None
+
+    def _get_jwt_exp(self, token):
+        try:
+            import base64
+            parts = token.split('.')
+            if len(parts) < 2:
+                return None
+            payload = parts[1]
+            rem = len(payload) % 4
+            if rem:
+                payload += '=' * (4 - rem)
+            decoded = base64.urlsafe_b64decode(payload.encode('ascii'))
+            data = json.loads(decoded.decode('utf-8'))
+            if 'exp' in data:
+                return int(data['exp'])
+        except Exception:
+            return None
+    def _parse_timestamp(self, value):
+        """Parse various timestamp/date formats to epoch seconds (int) or None."""
+        import datetime, re
+        if value is None:
+            return None
+        try:
+            if isinstance(value, (int, float)):
+                v = int(value)
+                if v > 10**12:
+                    v = v // 1000
+                if v > 10**9:
+                    return v
+        except Exception:
+            pass
+        if isinstance(value, str):
+            s = value.strip()
+            if re.fullmatch(r"\d+", s):
+                try:
+                    v = int(s)
+                    if v > 10**12:
+                        v = v // 1000
+                    if v > 10**9:
+                        return v
+                except Exception:
+                    pass
+            try:
+                if s.endswith('Z'):
+                    s2 = s[:-1] + '+00:00'
+                else:
+                    s2 = s
+                dt = datetime.datetime.fromisoformat(s2)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=datetime.timezone.utc)
+                return int(dt.timestamp())
+            except Exception:
+                pass
+            fmts = [
+                '%Y-%m-%dT%H:%M:%S.%f%z',
+                '%Y-%m-%dT%H:%M:%S%z',
+                '%Y-%m-%dT%H:%M:%S.%f',
+                '%Y-%m-%dT%H:%M:%S',
+                '%Y-%m-%d %H:%M:%S',
+                '%Y-%m-%d',
+            ]
+            for fmt in fmts:
+                try:
+                    dt = datetime.datetime.strptime(s, fmt)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=datetime.timezone.utc)
+                    return int(dt.timestamp())
+                except Exception:
+                    pass
+        return None
+
+    def get_profiles(self):
+        """Return list of profiles for the current account (requires an access token)."""
+        try:
+            token = self.get_access_token()
+            if not token:
+                return []
+            url = urllib.parse.urljoin(self.base_url, '/v7/profile')
+            headers = {
+                'User-Agent': self.user_agent,
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': 'https://app.nlziet.nl/',
+                'Origin': 'https://app.nlziet.nl',
+                'nlziet-appname': 'WebApp',
+                'nlziet-appversion': '6.0.3',
+                'nlziet-devicecapabilities': 'LowLatency,FutureItems,favoriteChannels,MyList,placementTile',
+                'Authorization': 'Bearer ' + token,
+            }
+            req = urllib.request.Request(url, headers=headers)
+            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                data = json.load(r)
+            return data or []
+        except Exception:
+            return []
+
+    def select_profile(self, profile_id=None):
+        """Perform an authorized profile-grant to obtain a profile-scoped access token."""
+        try:
+            # 1. Haal eerst het MASTER token op (we hebben dit nodig voor autorisatie)
+            master_token = self.get_access_token()
+            if not master_token:
+                xbmc.log("NLZiet: No master token available for profile switch", xbmc.LOGERROR)
+                return None
+
+            profiles = self.get_profiles()
+            chosen = None
+            if profile_id:
+                for p in profiles:
+                    if p.get('id') == profile_id or p.get('profileId') == profile_id:
+                        chosen = p
+                        break
+            
+            if not chosen and profiles:
+                chosen = profiles[0]
+            
+            if not chosen:
+                return None
+                
+            pid = chosen.get('id') or chosen.get('profileId')
+
+            # 2. De CRUCIALE fix: Voeg de master_token toe aan de headers
+            url = 'https://id.nlziet.nl/connect/token'
+            post = {
+                'grant_type': 'profile',
+                'profile': pid,
+                'client_id': 'triple-web',
+                'scope': 'openid api',
+            }
+            data = urllib.parse.urlencode(post).encode('utf-8')
+            # Include only the required headers for the profile-grant: master token and UA
+            headers = {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Authorization': 'Bearer ' + master_token,
+                'User-Agent': self.user_agent,
+            }
+            
+            req = urllib.request.Request(url, data=data, headers=headers)
+            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                resp = json.load(r)
+
+            now = int(time.time())
+            expires_in = int(resp.get('expires_in', 0) or 0)
+            self.tokens.update({
+                'access_token': resp.get('access_token'),
+                'refresh_token': resp.get('refresh_token', self.tokens.get('refresh_token')),
+                'expires_at': now + expires_in,
+            })
+            # remember which profile we switched to so other flows can reuse it
+            try:
+                self.tokens['profile_id'] = pid
+            except Exception:
+                pass
+
+            self.save_tokens()
+            self.token = self.tokens.get('access_token')
+            
+            # Sla het gekozen profiel op voor de volgende keer
+            try:
+                payload = {}
+                if os.path.exists(self.profile_file):
+                    try:
+                        with open(self.profile_file, 'r', encoding='utf-8') as f:
+                            existing = json.load(f)
+                        if isinstance(existing, dict):
+                            payload.update(existing)
+                    except Exception:
+                        payload = {}
+                payload['profile_id'] = pid
+                with open(self.profile_file, 'w', encoding='utf-8') as f:
+                    json.dump(payload, f)
+            except: pass
+
+            return self.tokens
+        except Exception as e:
+            xbmc.log(f"NLZiet: Profile switch failed: {e}", xbmc.LOGERROR)
+            return None
+
+    def login(self, return_url=None):
+        """Perform form login against id.nlziet.nl and persist cookies.
+
+        return_url: optional ReturnUrl value to include in the POST (if present in the login page,
+                    the form's hidden ReturnUrl will be preferred).
+        Returns True on success (heuristic), False otherwise.
+        """
+        if not self.username or not self.password:
+            raise ValueError('Missing username or password')
+
+        login_url = 'https://id.nlziet.nl/Account/Login'
+        if return_url:
+            login_url = login_url + '?' + urllib.parse.urlencode({'ReturnUrl': return_url})
+
+        try:
+            try:
+                user_hint = self.username.split('@', 1)[0] if self.username else ''
+                user_hint = (user_hint[:2] + '***') if user_hint else '<empty>'
+                self._append_debug(f"LOGIN start: user={user_hint} return_url={return_url or ''}")
+                self._debug_auth_state('before_form_login')
+            except Exception:
+                pass
+
+            resp = self._open_with_opener(self.opener, login_url, timeout=15)
+            html = resp.read().decode('utf-8', errors='ignore')
+
+            token = self._get_csrf_token(html)
+            m = re.search(r'name=["\']ReturnUrl["\'][^>]*value=["\']([^"\']+)["\']', html)
+            form_return = urllib.parse.unquote(m.group(1)) if m else return_url
+
+            try:
+                self._append_debug(
+                    f"LOGIN form parsed: csrf_present={bool(token)} return_url_present={bool(form_return)}"
+                )
+            except Exception:
+                pass
+
+            post_data = {
+                'EmailAddress': self.username,
+                'Password': self.password,
+                'button': 'login',
+            }
+            if form_return:
+                post_data['ReturnUrl'] = form_return
+            if token:
+                post_data['__RequestVerificationToken'] = token
+
+            data_bytes = urllib.parse.urlencode(post_data).encode('utf-8')
+            headers = {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Referer': login_url,
+                'Origin': 'https://id.nlziet.nl',
+                'User-Agent': self.user_agent,
+            }
+            req = urllib.request.Request(login_url, data=data_bytes, headers=headers)
+            resp2 = self._open_with_opener(self.opener, req, timeout=15)
+            final_url = resp2.geturl()
+            body = resp2.read().decode('utf-8', errors='ignore')
+
+            # Heuristics: redirected away from login page, or page contains logout text
+            success = False
+            final_url_l = (final_url or '').lower()
+            url_error_marker = '/home/error' in final_url_l or '%2fhome%2ferror' in final_url_l
+            has_session_cookie = self._has_cookie_session()
+            body_logout_marker = bool(re.search(r'logout|sign out|uitloggen', body, re.I))
+            body_invalid_marker = bool(re.search(r'ongeldig|invalid credentials|mislukt', body, re.I))
+            body_login_form_marker = bool(
+                re.search(r'EmailAddress|__RequestVerificationToken|name=["\']Password', body, re.I)
+            )
+            if final_url and 'login' not in final_url_l and not url_error_marker:
+                success = True
+            if not success and has_session_cookie and not body_login_form_marker:
+                success = True
+            if not success and body_logout_marker and not body_invalid_marker and not body_login_form_marker:
+                success = True
+
+            try:
+                self._append_debug(
+                    "LOGIN submit result: final_url={} url_error_marker={} has_session_cookie={} body_logout_marker={} body_invalid_marker={} body_login_form_marker={} success={}".format(
+                        final_url,
+                        url_error_marker,
+                        has_session_cookie,
+                        body_logout_marker,
+                        body_invalid_marker,
+                        body_login_form_marker,
+                        success,
+                    )
+                )
+            except Exception:
+                pass
+
+            self.save_cookies()
+            if success:
+                self.token = 'cookie-session'
+                try:
+                    self._debug_auth_state('after_form_login_success')
+                except Exception:
+                    pass
+                return True
+
+            try:
+                self._debug_auth_state('after_form_login_failed')
+            except Exception:
+                pass
+            return False
+        except Exception:
+            try:
+                self._append_debug(f"LOGIN exception: {traceback.format_exc()}")
+                self._debug_auth_state('form_login_exception')
+            except Exception:
+                pass
+            return False
+
+    def search(self, query, content_type='all'):
+        if not query:
+            return []
+        try:
+            # map incoming content_type to API contentType params (allow repeated keys)
+            ct = (content_type or 'all').lower()
+            if ct in ('episodes', 'episode', 'ep'):
+                api_content_types = ['Episode']
+            elif ct in ('movies', 'movie'):
+                api_content_types = ['Movie']
+            elif ct in ('series', 'tvshow', 'tv', 'show'):
+                api_content_types = ['Series']
+            else:
+                api_content_types = ['Movie', 'Series']
+
+            params = [
+                ('searchTerm', query),
+                ('limit', '999'),
+                ('offset', '0'),
+            ]
+            for v in api_content_types:
+                params.append(('contentType', v))
+
+            url = urllib.parse.urljoin(self.base_url, '/v9/search') + '?' + urllib.parse.urlencode(params, doseq=True)
+            headers = {
+                'User-Agent': self.user_agent,
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': 'https://app.nlziet.nl/',
+                'Origin': 'https://app.nlziet.nl',
+                'nlziet-appname': 'WebApp',
+                'nlziet-appversion': '6.0.3',
+                'nlziet-devicecapabilities': 'LowLatency,FutureItems,favoriteChannels,MyList,placementTile',
+            }
+            token = self.get_access_token()
+            # If we have a cookie-session but no tokens yet, try to obtain tokens
+            if not token and getattr(self, 'token', None) == 'cookie-session':
+                try:
+                    tokens = self.perform_pkce_authorize_and_exchange()
+                    if tokens and tokens.get('access_token'):
+                        token = tokens.get('access_token')
+                except Exception:
+                    token = None
+
+            if token:
+                headers['Authorization'] = 'Bearer ' + token
+
+            # include active profile id when present
+            try:
+                if os.path.exists(self.profile_file):
+                    with open(self.profile_file, 'r', encoding='utf-8') as pf_f:
+                        pfj = json.load(pf_f)
+                    profile_id = pfj.get('profile_id') or pfj.get('profile') or pfj.get('id')
+                    if profile_id:
+                        headers['X-Profile-Id'] = str(profile_id)
+            except Exception:
+                pass
+
+            # debug: record headers being sent for troubleshooting
+            try:
+                self._append_debug(f"Search headers: {headers}")
+            except Exception:
+                pass
+
+            req = urllib.request.Request(url, headers=headers)
+            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                data = json.load(r)
+                results = []
+                items = data.get('data') or data.get('results') or data.get('items') or []
+                for item in items:
+                    # item may contain 'item' or 'content' objects
+                    src = item.get('item') if isinstance(item, dict) and item.get('item') else item.get('content') if isinstance(item, dict) and item.get('content') else item
+                    if not isinstance(src, dict):
+                        continue
+                    content_id = src.get('id') or src.get('contentId') or src.get('content_id')
+                    title = src.get('title') or src.get('name') or (item.get('analytics') or {}).get('assetName')
+                    thumb = src.get('posterUrl') or (src.get('image') or {}).get('portraitUrl') or (src.get('image') or {}).get('landscapeUrl')
+                    typ = src.get('type') or (item.get('content') or {}).get('type')
+                    desc = src.get('description') or src.get('plot') or src.get('summary') or ''
+                    subtitle = src.get('subtitle') or src.get('subtitleText') or ''
+                    # detect expiration similar to get_movies
+                    expires_at = None
+                    for key in ('availableTo', 'available_to', 'availableUntil', 'available_until', 'endDate', 'end_date', 'expiresAt', 'expires_at', 'expiration', 'validUntil', 'valid_until', 'availableToDate', 'available_to_date'):
+                        if isinstance(src, dict) and key in src and src.get(key):
+                            parsed = self._parse_timestamp(src.get(key))
+                            if parsed:
+                                expires_at = parsed
+                                break
+                    if not expires_at:
+                        availability = src.get('availability') or src.get('availabilities') or src.get('availabilityRange') or src.get('availableRanges')
+                        if availability:
+                            if isinstance(availability, dict):
+                                for k in ('endDate', 'to', 'availableTo', 'end'):
+                                    v = availability.get(k)
+                                    if v:
+                                        parsed = self._parse_timestamp(v)
+                                        if parsed:
+                                            expires_at = parsed
+                                            break
+                            elif isinstance(availability, (list, tuple)):
+                                for a in availability:
+                                    if isinstance(a, dict):
+                                        v = a.get('endDate') or a.get('to') or a.get('availableTo') or a.get('end')
+                                        if v:
+                                            parsed = self._parse_timestamp(v)
+                                            if parsed:
+                                                expires_at = parsed
+                                                break
+                    expires_in = None
+                    if expires_at:
+                        now = int(time.time())
+                        secs = expires_at - now
+                        if secs <= 0:
+                            expires_in = 'Expired'
+                        else:
+                            days = secs // 86400
+                            if days >= 1:
+                                expires_in = f'Expires in {days}d'
+                            else:
+                                hours = secs // 3600
+                                if hours >= 1:
+                                    expires_in = f'Expires in {hours}h'
+                                else:
+                                    minutes = max(1, secs // 60)
+                                    expires_in = f'Expires in {minutes}m'
+                    results.append({'id': content_id, 'title': title, 'thumb': thumb, 'type': typ, 'description': desc, 'subtitle': subtitle, 'posterUrl': thumb, 'expires_at': expires_at, 'expires_in': expires_in})
+                return results
+        except Exception as e:
+            try:
+                xbmc.log(f"NLZiet search error for query={query}: {e}", xbmc.LOGERROR)
+            except Exception:
+                pass
+            try:
+                import traceback
+                self._append_debug(f"Search exception for query={query}: {traceback.format_exc()}")
+            except Exception:
+                pass
+            return []
+
+    def get_stream_info(self, content_id, context='OnDemand', playerName='BitmovinWeb', sourceType='Dash', preferLowLatency='false'):
+        if not content_id:
+            raise ValueError('content_id required')
+        try:
+            # Use the webapp's handshake endpoint to obtain manifest and DRM info
+            # For Live contexts the handshake API expects a `channel` parameter
+            # and `offsetType=Live` with a referer that contains `channel=...`.
+            if str(context).lower() == 'live':
+                params = {
+                    'channel': content_id,
+                    'playerName': playerName,
+                    'context': 'Live',
+                    'drmType': 'Widevine',
+                    'sourceType': sourceType,
+                    'consent': '',
+                    'offsetType': 'Live',
+                    'referer': f'https://app.nlziet.nl/play?context=Live&channel={content_id}',
+                    'playerName': playerName,
+                    'preferLowLatency': preferLowLatency,
+                }
+            else:
+                params = {
+                    'id': content_id,
+                    'playerName': playerName,
+                    'context': context,
+                    'drmType': 'Widevine',
+                    'sourceType': sourceType,
+                    'consent': '',
+                    'offsetType': 'Resume',
+                    'referer': f'https://app.nlziet.nl/play?context={context}&id={content_id}',
+                    'preferLowLatency': preferLowLatency,
+                }
+            url = urllib.parse.urljoin(self.base_url, '/v9/stream/handshake') + '?' + urllib.parse.urlencode(params)
+            headers = {
+                'User-Agent': self.user_agent,
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': 'https://app.nlziet.nl/',
+                'Origin': 'https://app.nlziet.nl',
+                'nlziet-appname': 'WebApp',
+                'nlziet-appversion': '6.0.3',
+                'nlziet-devicecapabilities': 'LowLatency,FutureItems,favoriteChannels,MyList,placementTile',
+            }
+            token = self.get_valid_token()
+            if token:
+                headers['Authorization'] = 'Bearer ' + token
+            # Include active profile id in handshake when known (use tokens first)
+            try:
+                profile_id = self.tokens.get('profile_id')
+                if profile_id:
+                    headers['X-Profile-Id'] = str(profile_id)
+            except Exception:
+                pass
+            req = urllib.request.Request(url, headers=headers)
+            xbmc.log(f"NLZiet get_stream_info request: {url} headers={headers}", xbmc.LOGDEBUG)
+            try:
+                with self._open_with_opener(self.opener, req, timeout=20) as r:
+                    data = json.load(r)
+            except urllib.error.HTTPError as he:
+                # If unauthorized, try to obtain tokens via PKCE using the saved cookie session
+                if he.code == 401:
+                    xbmc.log(f"NLZiet handshake 401 for id={content_id}, attempting PKCE authorize+exchange", xbmc.LOGWARNING)
+                    tokens = self.perform_pkce_authorize_and_exchange()
+                    if tokens:
+                        # rebuild Authorization header and retry once
+                        token = self.get_valid_token()
+                        if token:
+                            headers['Authorization'] = 'Bearer ' + token
+                            req = urllib.request.Request(url, headers=headers)
+                            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                                data = json.load(r)
+                        else:
+                            xbmc.log("NLZiet: token exchange succeeded but no access_token available", xbmc.LOGERROR)
+                            raise
+                    else:
+                        xbmc.log("NLZiet: PKCE authorize+exchange failed (401)", xbmc.LOGERROR)
+                        raise
+                else:
+                    raise
+
+            try:
+                xbmc.log("NLZiet handshake response: %s" % (json.dumps(data)[:1000]), xbmc.LOGDEBUG)
+            except Exception:
+                pass
+
+            # Robustly extract a manifest URL from the handshake response.
+            # Some handshakes use different keys or nest the URL inside objects/arrays.
+            manifest = None
+            for k in ('manifestUrl', 'manifest', 'manifestURL', 'mediaManifestUrl', 'playbackUrl', 'playbackURL', 'streamUrl', 'stream_url', 'mediaUrl', 'url', 'dashUrl', 'mpdUrl'):
+                v = data.get(k)
+                if v:
+                    manifest = v
+                    break
+
+            # inspect common nested containers if direct keys didn't match
+            if not manifest:
+                for container in ('item', 'stream', 'playback', 'media', 'data', 'result', 'response'):
+                    part = data.get(container)
+                    if isinstance(part, dict):
+                        for k in ('manifestUrl', 'manifest', 'manifestURL', 'mediaManifestUrl', 'playbackUrl', 'playbackURL', 'streamUrl', 'stream_url', 'mediaUrl', 'url', 'dashUrl', 'mpdUrl'):
+                            v = part.get(k)
+                            if v:
+                                manifest = v
+                                break
+                        if manifest:
+                            break
+                    elif isinstance(part, list):
+                        for entry in part:
+                            if isinstance(entry, dict):
+                                for k in ('manifestUrl', 'manifest', 'manifestURL', 'mediaManifestUrl', 'playbackUrl', 'playbackURL', 'streamUrl', 'stream_url', 'mediaUrl', 'url', 'dashUrl', 'mpdUrl'):
+                                    v = entry.get(k)
+                                    if v:
+                                        manifest = v
+                                        break
+                                if manifest:
+                                    break
+                        if manifest:
+                            break
+
+            # As a last resort, recursively collect any http(s) URLs and pick the
+            # most likely candidate (prefer .mpd / manifest / Policy= tokens).
+            if not manifest:
+                urls = []
+                def collect_urls(obj):
+                    if isinstance(obj, str):
+                        if obj.startswith('http'):
+                            urls.append(obj)
+                    elif isinstance(obj, dict):
+                        for vv in obj.values():
+                            collect_urls(vv)
+                    elif isinstance(obj, list):
+                        for vv in obj:
+                            collect_urls(vv)
+                collect_urls(data)
+                for u in urls:
+                    try:
+                        if '.mpd' in u or 'manifest' in u or 'Policy=' in u:
+                            manifest = u
+                            break
+                    except Exception:
+                        continue
+                if not manifest and urls:
+                    manifest = urls[0]
+            drm = data.get('drm') or {}
+            license_url = drm.get('licenseUrl') or drm.get('license_url')
+            license_headers = drm.get('headers') or {}
+
+            # collect subtitles exposed by the handshake (many items use OutOfBand VTT)
+            try:
+                raw_subs = data.get('subtitles') or data.get('item', {}).get('subtitles') or []
+            except Exception:
+                raw_subs = []
+            subtitles = []
+            try:
+                if isinstance(raw_subs, (list, tuple)):
+                    for s in raw_subs:
+                        if isinstance(s, dict):
+                            url = s.get('url') or s.get('uri') or s.get('file')
+                            lang = s.get('lang') or s.get('language') or s.get('key')
+                            name = s.get('name') or s.get('label') or None
+                            auto = bool(s.get('isAutoSelected') or s.get('default') or s.get('auto') )
+                            if url:
+                                subtitles.append({'url': url, 'lang': lang, 'name': name, 'auto': auto})
+                elif isinstance(raw_subs, dict):
+                    # sometimes object with language keys
+                    for k, v in raw_subs.items():
+                        if isinstance(v, dict):
+                            url = v.get('url') or v.get('uri') or v.get('file')
+                            lang = v.get('lang') or k
+                            name = v.get('name') or None
+                            auto = bool(v.get('isAutoSelected') or v.get('default') or v.get('auto'))
+                            if url:
+                                subtitles.append({'url': url, 'lang': lang, 'name': name, 'auto': auto})
+            except Exception:
+                subtitles = []
+
+            # Normalize license_headers into a simple dict[str, str] so playback
+            # code can reliably build the 4-pipe license_key. Handle common
+            # shapes returned by different APIs: dict, list of dicts, or
+            # header-string.
+            try:
+                if isinstance(license_headers, list):
+                    nh = {}
+                    for h in license_headers:
+                        if isinstance(h, dict):
+                            name = h.get('name') or h.get('key') or h.get('header')
+                            if not name:
+                                # fallback: take first key/value pair
+                                value = None
+                                for k, v in h.items():
+                                    name = k
+                                    value = v
+                                    break
+                                if name:
+                                    nh[str(name)] = '' if value is None else str(value)
+                            else:
+                                val = h.get('value') or h.get('val') or ''
+                                nh[str(name)] = '' if val is None else str(val)
+                        elif isinstance(h, str):
+                            if ':' in h:
+                                k, v = h.split(':', 1)
+                                nh[k.strip()] = v.strip()
+                            elif '=' in h:
+                                k, v = h.split('=', 1)
+                                nh[k.strip()] = v.strip()
+                    license_headers = nh
+                elif isinstance(license_headers, dict):
+                    nh = {}
+                    for k, v in license_headers.items():
+                        if isinstance(v, list):
+                            nh[str(k)] = ','.join(str(x) for x in v)
+                        elif isinstance(v, dict):
+                            nh[str(k)] = '' if v is None else str(v.get('value') or v.get('val') or json.dumps(v))
+                        else:
+                            nh[str(k)] = '' if v is None else str(v)
+                    license_headers = nh
+                elif isinstance(license_headers, str):
+                    nh = {}
+                    parts = [p for p in re.split(r'[\r\n;&]', license_headers) if p.strip()]
+                    for p in parts:
+                        if ':' in p:
+                            k, v = p.split(':', 1)
+                            nh[k.strip()] = v.strip()
+                        elif '=' in p:
+                            k, v = p.split('=', 1)
+                            nh[k.strip()] = v.strip()
+                    license_headers = nh
+                else:
+                    license_headers = {}
+            except Exception:
+                # best-effort: keep dict form if possible, else empty dict
+                if not isinstance(license_headers, dict):
+                    license_headers = {}
+
+            is_drm = bool(drm and (license_url or license_headers))
+
+            # attempt to detect DRM security level (L1/L3) from handshake fields
+            drm_security = None
+            possible_keys = ['securityLevel', 'security_level', 'securitylevel', 'requiredSecurity', 'protectionLevel', 'protection_level', 'security']
+            for k in possible_keys:
+                if k in drm:
+                    val = drm.get(k)
+                    if isinstance(val, str):
+                        drm_security = val
+                        break
+                    if isinstance(val, dict):
+                        if 'level' in val:
+                            drm_security = val.get('level')
+                            break
+                        if 'security' in val:
+                            drm_security = val.get('security')
+                            break
+
+            # also check top-level response fields if not found inside drm
+            if not drm_security:
+                for k in possible_keys:
+                    if k in data:
+                        v = data.get(k)
+                        if isinstance(v, str):
+                            drm_security = v
+                            break
+                        if isinstance(v, dict):
+                            drm_security = v.get('level') or v.get('security')
+                            if drm_security:
+                                break
+
+            # normalize to patterns like 'L1' or 'L3' when possible
+            if isinstance(drm_security, str):
+                m = re.search(r'(L[1-3])', drm_security, re.I)
+                if m:
+                    drm_security = m.group(1).upper()
+
+            # Ensure the license request headers contain the same User-Agent and
+            # the profile-scoped access token so the license proxy sees the
+            # session-consistent identity.
+            try:
+                profile_token = self.get_access_token()
+                if isinstance(license_headers, dict):
+                    license_headers['User-Agent'] = self.user_agent
+                    # If the handshake already supplies an Nlziet-License token,
+                    # prefer it and avoid adding an Authorization header which
+                    # differs from the browser/live behavior observed in the HAR.
+                    lh_keys = set(k.lower() for k in license_headers.keys())
+                    if profile_token and not any(k in lh_keys for k in ('nlziet-license', 'nlziet_license', 'nlzietlicense')):
+                        license_headers['Authorization'] = 'Bearer ' + profile_token
+            except Exception:
+                pass
+
+            return {
+                'manifest': manifest,
+                'is_drm': is_drm,
+                'license_url': license_url,
+                'license_headers': license_headers,
+                'drm_security': drm_security,
+                'drm_raw': drm,
+                'subtitles': subtitles,
+                'handshake': data,
+            }
+        except Exception as e:
+            xbmc.log(f"NLZiet get_stream_info error for id={content_id}: {e}", xbmc.LOGERROR)
+            xbmc.log(traceback.format_exc(), xbmc.LOGERROR)
+            return {
+                'manifest': None,
+                'is_drm': False,
+                'license_url': None,
+                'license_headers': {},
+            }
+
+    def get_channels(self):
+        """Return the EPG channel list from /v9/epg/channels as a list of dicts.
+
+        Each item contains at least `id`, `title`, `thumb`, `is_favorite` and
+        `is_live_only` when available.
+        """
+        try:
+            url = urllib.parse.urljoin(self.base_url, '/v9/epg/channels')
+            headers = {
+                'User-Agent': self.user_agent,
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': 'https://app.nlziet.nl/',
+                'Origin': 'https://app.nlziet.nl',
+                'nlziet-appname': 'WebApp',
+                'nlziet-appversion': '6.0.3',
+                'nlziet-devicecapabilities': 'LowLatency,FutureItems,favoriteChannels,MyList,placementTile',
+            }
+            token = self.get_valid_token()
+            if token:
+                headers['Authorization'] = 'Bearer ' + token
+            req = urllib.request.Request(url, headers=headers)
+            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                data = json.load(r)
+            items = data.get('channels') or data.get('data') or []
+            results = []
+            for it in items:
+                content = it.get('content') if isinstance(it, dict) and it.get('content') else it
+                if not isinstance(content, dict):
+                    content = {}
+                cid = None
+                title = None
+                thumb = None
+                is_fav = False
+                is_live = False
+                try:
+                    cid = content.get('id') or content.get('contentId') or content.get('content_id')
+                    title = content.get('title') or content.get('name')
+                    logo = content.get('logo') or {}
+                    thumb = logo.get('normalUrl') or logo.get('flatUrl') or logo.get('darkUrl')
+                    is_live = bool(content.get('isLiveOnly') or content.get('is_live_only'))
+                except Exception:
+                    pass
+                if isinstance(it, dict):
+                    is_fav = bool(it.get('isFavorite') or it.get('is_favourite') or False)
+                results.append({'id': cid, 'title': title, 'thumb': thumb, 'is_favorite': is_fav, 'is_live_only': is_live})
+            return results
+        except Exception as e:
+            xbmc.log(f"NLZiet get_channels error: {e}", xbmc.LOGERROR)
+            return []
+
+    def get_current_programs(self, channel_ids=None, date=None):
+        """Fetch EPG program locations for the given channels and return a mapping
+        of channel_id -> current program info (title, description, start, end).
+
+        - `channel_ids` may be a list of channel ids or a single id. If omitted,
+          the endpoint will be called without channel filters.
+        - `date` should be a string in YYYY-MM-DD format; if omitted today's
+          date (local) is used.
+        """
+        try:
+            import datetime
+
+            if not date:
+                date = datetime.date.today().isoformat()
+
+            params = [('date', date)]
+            if channel_ids:
+                if isinstance(channel_ids, (list, tuple)):
+                    for c in channel_ids:
+                        if c:
+                            params.append(('channel', str(c)))
+                else:
+                    params.append(('channel', str(channel_ids)))
+
+            qs = urllib.parse.urlencode(params, doseq=True)
+            url = urllib.parse.urljoin(self.base_url, '/v9/epg/programlocations') + '?' + qs
+
+            headers = {
+                'User-Agent': self.user_agent,
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': 'https://app.nlziet.nl/',
+                'Origin': 'https://app.nlziet.nl',
+                'nlziet-appname': 'WebApp',
+                'nlziet-appversion': '6.0.3',
+                'nlziet-devicecapabilities': 'LowLatency,FutureItems,favoriteChannels,MyList,placementTile',
+            }
+            token = self.get_access_token()
+            if token:
+                headers['Authorization'] = 'Bearer ' + token
+
+            req = urllib.request.Request(url, headers=headers)
+            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                data = json.load(r)
+
+            # Identify list container in response and handle nested channel/programLocations format
+            items = None
+            flattened_items = []
+            
+            if isinstance(data, dict):
+                for key in ('programLocations', 'programs', 'items', 'data', 'results'):
+                    if key in data and isinstance(data.get(key), (list, tuple)):
+                        items = data.get(key)
+                        break
+                if items is None:
+                    # fallback: collect any lists found at top-level
+                    collected = []
+                    for v in data.values():
+                        if isinstance(v, list):
+                            collected.extend(v)
+                    items = collected
+            elif isinstance(data, list):
+                items = data
+            else:
+                items = []
+
+            # Detect and flatten nested channel/programLocations response format
+            # Response may have format: [{ "channel": {...}, "programLocations": [...] }, ...]
+            if items:
+                first_item = items[0] if items else {}
+                if isinstance(first_item, dict) and 'channel' in first_item and 'programLocations' in first_item:
+                    # This is the nested format - flatten it
+                    for item_group in items:
+                        if not isinstance(item_group, dict):
+                            continue
+                        channel_obj = item_group.get('channel')
+                        program_locations = item_group.get('programLocations', [])
+                        
+                        # Extract channel ID from nested structure
+                        channel_id = None
+                        if isinstance(channel_obj, dict):
+                            content = channel_obj.get('content', {})
+                            if isinstance(content, dict):
+                                channel_id = content.get('id') or content.get('contentId')
+                            else:
+                                channel_id = channel_obj.get('id') or channel_obj.get('contentId')
+                        
+                        # Flatten each program location with its channel ID
+                        if channel_id and isinstance(program_locations, list):
+                            for prog_loc in program_locations:
+                                if isinstance(prog_loc, dict):
+                                    flattened_items.append({
+                                        'channel': channel_id,
+                                        'program': prog_loc
+                                    })
+                    items = flattened_items if flattened_items else items
+
+            epg_map = {}
+            now_ts = int(time.time())
+
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+
+                # Attempt to determine channel id for this item
+                channel = None
+                for ck in ('channel', 'channelId', 'channel_id', 'channelCode', 'id'):
+                    if ck in it and it.get(ck):
+                        channel = it.get(ck)
+                        break
+                if not channel:
+                    # try nested containers
+                    for container in ('content', 'program', 'channelInfo'):
+                        part = it.get(container)
+                        if isinstance(part, dict):
+                            for ck in ('channel', 'channelId', 'id', 'code'):
+                                if ck in part and part.get(ck):
+                                    channel = part.get(ck)
+                                    break
+                            if channel:
+                                break
+
+                # program object may be nested or the item itself
+                program = None
+                for pkey in ('program', 'programme', 'programItem', 'programLocation', 'item'):
+                    if pkey in it and it.get(pkey):
+                        program = it.get(pkey)
+                        break
+                if not program:
+                    program = it
+
+                # extract human fields from program or its content sub-object
+                content_obj = program.get('content') if isinstance(program, dict) and program else {}
+                title = (program.get('title') if isinstance(program, dict) else None) or (content_obj.get('title') if isinstance(content_obj, dict) else None) or (program.get('name') if isinstance(program, dict) else None) or (program.get('programmeTitle') if isinstance(program, dict) else None) or ''
+                desc = (program.get('description') if isinstance(program, dict) else None) or (content_obj.get('description') if isinstance(content_obj, dict) else None) or (program.get('summary') if isinstance(program, dict) else None) or (program.get('shortDescription') if isinstance(program, dict) else None) or ''
+
+                # parse start/end timestamps using existing helper
+                start_ts = None
+                end_ts = None
+                for k in ('startTime', 'start', 'start_time', 'scheduledStart', 'startDateTime', 'from', 'startAt'):
+                    val = (program.get(k) if isinstance(program, dict) else None) or (content_obj.get(k) if isinstance(content_obj, dict) else None)
+                    if val:
+                        parsed = self._parse_timestamp(val)
+                        if parsed:
+                            start_ts = parsed
+                            break
+                for k in ('endTime', 'end', 'end_time', 'scheduledEnd', 'endDateTime', 'to', 'endAt'):
+                    val = (program.get(k) if isinstance(program, dict) else None) or (content_obj.get(k) if isinstance(content_obj, dict) else None)
+                    if val:
+                        parsed = self._parse_timestamp(val)
+                        if parsed:
+                            end_ts = parsed
+                            break
+
+                # fallback to item-level fields
+                if not start_ts:
+                    for k in ('startTime', 'start', 'from', 'startAt'):
+                        if it.get(k):
+                            parsed = self._parse_timestamp(it.get(k))
+                            if parsed:
+                                start_ts = parsed
+                                break
+                if not end_ts:
+                    for k in ('endTime', 'end', 'to', 'endAt'):
+                        if it.get(k):
+                            parsed = self._parse_timestamp(it.get(k))
+                            if parsed:
+                                end_ts = parsed
+                                break
+
+                in_now = False
+                if start_ts and end_ts:
+                    if start_ts <= now_ts <= end_ts:
+                        in_now = True
+                else:
+                    if program.get('isRunningNow') or program.get('isNow') or program.get('running'):
+                        in_now = True
+
+                if channel:
+                    key = str(channel)
+                    
+                    # Store program with timestamp info for sorting and selection later
+                    prog_info = {
+                        'title': title,
+                        'desc': desc,
+                        'start': start_ts,
+                        'end': end_ts,
+                        'in_now': in_now,
+                        'raw': program
+                    }
+                    
+                    # Keep a list of all programs per channel to find current and next
+                    if key not in epg_map:
+                        epg_map[key] = {'programs': [], 'current': None, 'next': None}
+                    
+                    epg_map[key]['programs'].append(prog_info)
+            
+            # Post-process: for each channel, identify current and next programs
+            for channel_id in epg_map:
+                channel_data = epg_map[channel_id]
+                programs = channel_data.get('programs', [])
+                
+                # Sort programs by start time
+                sorted_progs = sorted([p for p in programs if p.get('start')], key=lambda p: p.get('start', 0))
+                
+                # Find currently playing (highest priority)
+                current_prog = None
+                next_prog = None
+                for i, prog in enumerate(sorted_progs):
+                    if prog.get('in_now'):
+                        current_prog = prog
+                        # Next program is the following one
+                        if i + 1 < len(sorted_progs):
+                            next_prog = sorted_progs[i + 1]
+                        break
+                
+                # If no current playing program found, use the last one that started (most recent)
+                if not current_prog and sorted_progs:
+                    current_prog = sorted_progs[-1]
+                    # Next would be beyond today
+                
+                epg_map[channel_id]['current'] = current_prog
+                epg_map[channel_id]['next'] = next_prog
+                # Clean up the temporary programs list
+                epg_map[channel_id].pop('programs', None)
+
+            return epg_map
+        except Exception as e:
+            xbmc.log(f"NLZiet get_current_programs error: {e}", xbmc.LOGERROR)
+            xbmc.log(traceback.format_exc(), xbmc.LOGERROR)
+            return {}
+
+    def get_series_list(self, limit=999, offset=0):
+        """Return a flat list of series using the recommend/filtered Series endpoint.
+
+        Each item mirrors the shape used by get_movies/search: dict with
+        `id`, `title`, `thumb`, `description`, `subtitle` when available.
+        """
+        try:
+            url = urllib.parse.urljoin(self.base_url, f'/v9/recommend/filtered?category=Series&limit={limit}&offset={offset}')
+            headers = {
+                'User-Agent': self.user_agent,
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': 'https://app.nlziet.nl/',
+                'Origin': 'https://app.nlziet.nl',
+                'nlziet-appname': 'WebApp',
+                'nlziet-appversion': '6.0.3',
+                'nlziet-devicecapabilities': 'LowLatency,FutureItems,favoriteChannels,MyList,placementTile',
+            }
+            token = self.get_access_token()
+            if token:
+                headers['Authorization'] = 'Bearer ' + token
+            try:
+                if os.path.exists(self.profile_file):
+                    with open(self.profile_file, 'r', encoding='utf-8') as pf_f:
+                        pfj = json.load(pf_f)
+                    profile_id = pfj.get('profile_id') or pfj.get('profile') or pfj.get('id')
+                    if profile_id:
+                        headers['X-Profile-Id'] = str(profile_id)
+            except Exception:
+                pass
+
+            req = urllib.request.Request(url, headers=headers)
+            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                data = json.load(r)
+
+            items = data.get('data') or data.get('results') or data.get('items') or []
+
+            # Try to obtain seasons metadata from the episodes response itself
+            # (some endpoints include `content.seasons`) so we can map global
+            # episode numbers (Afl. N) to a particular season when episode
+            # counts are provided.
+            seasons_list = []
+            try:
+                content_container = data.get('content') if isinstance(data, dict) else None
+                cs = None
+                if isinstance(content_container, dict):
+                    cs = content_container.get('seasons') or content_container.get('seasonList') or content_container.get('season_list')
+                if not cs and isinstance(data.get('seasons'), list):
+                    cs = data.get('seasons')
+                if isinstance(cs, list) and cs:
+                    for s in cs:
+                        try:
+                            sid = s.get('id') or s.get('seasonId') or s.get('season_id') or s.get('season') or ''
+                            title_s = s.get('title') or s.get('name') or s.get('label') or (f"Season {sid}" if sid else '')
+                            ep_count = s.get('episodeCount') or s.get('episode_count') or None
+                            if ep_count is not None:
+                                try:
+                                    ep_count = int(ep_count)
+                                except Exception:
+                                    ep_count = None
+                            seasons_list.append({'id': sid or title_s, 'title': title_s, 'episode_count': ep_count, 'start': None, 'end': None})
+                        except Exception:
+                            continue
+                    # compute cumulative ranges for seasons that include episode counts
+                    running = 0
+                    for s in seasons_list:
+                        if s.get('episode_count'):
+                            s['start'] = running + 1
+                            s['end'] = running + s['episode_count']
+                            running = s['end']
+            except Exception:
+                seasons_list = []
+
+            # NOTE: get_series_list does not work with a single series_id, so
+            # do not attempt per-series season-detail fallback here.
+
+            results = []
+            for item in items:
+                src = item.get('item') if isinstance(item, dict) and item.get('item') else item.get('content') if isinstance(item, dict) and item.get('content') else item
+                if not isinstance(src, dict):
+                    continue
+                content_id = src.get('id') or src.get('contentId') or src.get('content_id')
+                title = src.get('title') or src.get('name') or (item.get('analytics') or {}).get('assetName')
+                thumb = src.get('posterUrl') or (src.get('image') or {}).get('portraitUrl') or (src.get('image') or {}).get('landscapeUrl')
+                desc = src.get('description') or src.get('plot') or src.get('summary') or ''
+                subtitle = src.get('subtitle') or src.get('subtitleText') or ''
+                
+                # Detect expiration timestamps
+                expires_at = None
+                for key in ('availableTo', 'available_to', 'availableUntil', 'available_until', 'endDate', 'end_date', 'expiresAt', 'expires_at', 'expiration', 'validUntil', 'valid_until', 'availableToDate', 'available_to_date'):
+                    if isinstance(src, dict) and key in src and src.get(key):
+                        parsed = self._parse_timestamp(src.get(key))
+                        if parsed:
+                            expires_at = parsed
+                            break
+                if not expires_at:
+                    availability = src.get('availability') or src.get('availabilities') or src.get('availabilityRange') or src.get('availableRanges')
+                    if availability:
+                        if isinstance(availability, dict):
+                            for k in ('endDate', 'to', 'availableTo', 'end'):
+                                v = availability.get(k)
+                                if v:
+                                    parsed = self._parse_timestamp(v)
+                                    if parsed:
+                                        expires_at = parsed
+                                        break
+                        elif isinstance(availability, (list, tuple)):
+                            for a in availability:
+                                if isinstance(a, dict):
+                                    v = a.get('endDate') or a.get('to') or a.get('availableTo') or a.get('end')
+                                    if v:
+                                        parsed = self._parse_timestamp(v)
+                                        if parsed:
+                                            expires_at = parsed
+                                            break
+                expires_in = None
+                if expires_at:
+                    now = int(time.time())
+                    secs = expires_at - now
+                    if secs <= 0:
+                        expires_in = 'Expired'
+                    else:
+                        days = secs // 86400
+                        if days >= 1:
+                            expires_in = f'Expires in {days}d'
+                        else:
+                            hours = secs // 3600
+                            if hours >= 1:
+                                expires_in = f'Expires in {hours}h'
+                            else:
+                                minutes = max(1, secs // 60)
+                                expires_in = f'Expires in {minutes}m'
+                
+                results.append({'id': content_id, 'title': title, 'thumb': thumb, 'description': desc, 'subtitle': subtitle, 'expires_at': expires_at, 'expires_in': expires_in})
+            return results
+        except Exception as e:
+            xbmc.log(f"NLZiet get_series_list error: {e}", xbmc.LOGERROR)
+            return []
+
+    def get_placement_rows(self, placement_id='explore-series'):
+        """Fetch placement rows (UI collections) such as the explore-series placement.
+
+        Returns the placement JSON `components` list when available.
+        """
+        try:
+            url = urllib.parse.urljoin(self.base_url, f'/v9/placement/rows/{placement_id}')
+            headers = {
+                'User-Agent': self.user_agent,
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': 'https://app.nlziet.nl/',
+                'Origin': 'https://app.nlziet.nl',
+                'nlziet-appname': 'WebApp',
+                'nlziet-appversion': '6.0.3',
+            }
+            token = self.get_access_token()
+            if token:
+                headers['Authorization'] = 'Bearer ' + token
+            req = urllib.request.Request(url, headers=headers)
+            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                data = json.load(r)
+
+            # components often appear under `components` or `rows`
+            comps = data.get('components') or data.get('rows') or data.get('data') or []
+            return comps
+        except Exception as e:
+            xbmc.log(f"NLZiet get_placement_rows error: {e}", xbmc.LOGERROR)
+            return []
+
+    def get_items_from_url(self, url):
+        """Fetch an arbitrary recommend/filtered/items URL returned in placement rows.
+
+        Returns a flat list of item content dicts (unified to the `src` content shape).
+        """
+        if not url:
+            return []
+        try:
+            # Accept relative URLs too; coerce recommend endpoints to request more items.
+            full = url if url.startswith('http') else urllib.parse.urljoin(self.base_url, url)
+            try:
+                parsed = urllib.parse.urlparse(full)
+                path = parsed.path or ''
+                # Only adjust known recommend endpoints and only when a limit
+                # query parameter is explicitly present to avoid altering
+                # unrelated URLs or nested/encoded queries.
+                if 'recommend/withcontext' in path or 'recommend/filtered' in path:
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    if 'limit' in qs:
+                        try:
+                            cur = int(qs.get('limit', ['0'])[0])
+                        except Exception:
+                            cur = 0
+                        if cur < 999:
+                            qs['limit'] = ['999']
+                            new_q = urllib.parse.urlencode(qs, doseq=True)
+                            parsed = parsed._replace(query=new_q)
+                            full = urllib.parse.urlunparse(parsed)
+            except Exception:
+                pass
+            headers = {
+                'User-Agent': self.user_agent,
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': 'https://app.nlziet.nl/',
+                'Origin': 'https://app.nlziet.nl',
+                'nlziet-appname': 'WebApp',
+                'nlziet-appversion': '6.0.3',
+            }
+            token = self.get_access_token()
+            if token:
+                headers['Authorization'] = 'Bearer ' + token
+            req = urllib.request.Request(full, headers=headers)
+            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                data = json.load(r)
+
+            items = data.get('data') or data.get('results') or data.get('items') or []
+
+            results = []
+            for item in items:
+                src = item.get('item') if isinstance(item, dict) and item.get('item') else item.get('content') if isinstance(item, dict) and item.get('content') else item
+                if not isinstance(src, dict):
+                    continue
+                results.append(src)
+            return results
+        except Exception as e:
+            xbmc.log(f"NLZiet get_items_from_url error for {url}: {e}", xbmc.LOGERROR)
+            return []
+
+    def get_series_detail(self, series_id):
+        """Fetch series detail (seasons + metadata) using the series detail endpoint.
+
+        Returns a dict with at least `id`, `title`, `description`, `thumb`, and
+        `seasons` (list of {id, title, episodes_url}).
+        """
+        if not series_id:
+            return {}
+        try:
+            url = urllib.parse.urljoin(self.base_url, f'/v8/series/{series_id}')
+            headers = {
+                'User-Agent': self.user_agent,
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': 'https://app.nlziet.nl/',
+                'Origin': 'https://app.nlziet.nl',
+                'nlziet-appname': 'WebApp',
+                'nlziet-appversion': '6.0.3',
+            }
+            token = self.get_access_token()
+            if token:
+                headers['Authorization'] = 'Bearer ' + token
+            req = urllib.request.Request(url, headers=headers)
+            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                data = json.load(r)
+
+            # Attempt to extract title/description/thumb
+            title = data.get('title') or data.get('name') or ''
+            desc = data.get('description') or data.get('plot') or ''
+            thumb = None
+            try:
+                img = data.get('posterUrl') or (data.get('image') or {})
+                if isinstance(img, dict):
+                    thumb = img.get('portraitUrl') or img.get('landscapeUrl') or img.get('posterUrl')
+                elif isinstance(img, str):
+                    thumb = img
+            except Exception:
+                thumb = None
+
+            # If the API embeds an explicit `content.seasons` list prefer that
+            # structure: each entry typically contains a title and episodeCount.
+            try:
+                content_container = data.get('content') if isinstance(data, dict) else None
+                if isinstance(content_container, dict):
+                    cs = content_container.get('seasons') or content_container.get('seasonList') or None
+                    if isinstance(cs, list) and cs:
+                        seasons = []
+                        for s in cs:
+                            try:
+                                sid = s.get('id') or s.get('seasonId') or s.get('season_id') or s.get('season') or ''
+                                title_s = s.get('title') or s.get('name') or s.get('label') or (f"Season {sid}" if sid else '')
+                                ep_count = s.get('episodeCount') or s.get('episode_count') or None
+                                episodes_url = s.get('episodesUrl') or s.get('episodes_url') or s.get('itemsUrl') or s.get('url') or None
+                                seasons.append({'id': sid or title_s, 'title': title_s, 'episodes_url': episodes_url, 'episode_count': ep_count})
+                            except Exception:
+                                continue
+                        if seasons:
+                            return {'id': series_id, 'title': title, 'description': desc, 'thumb': thumb, 'seasons': seasons, 'raw': data}
+            except Exception:
+                pass
+            seasons = []
+            comps = data.get('components') or data.get('sections') or []
+            if isinstance(comps, dict):
+                comps = [comps]
+            try:
+                for comp in comps:
+                    if not isinstance(comp, dict):
+                        continue
+                    comp_items = comp.get('items')
+                    if comp.get('type') == 'Sections' and isinstance(comp_items, list):
+                        for itm in comp_items:
+                            sid = None
+                            season_title = itm.get('title') or itm.get('id') or ''
+                            iid = itm.get('id') or ''
+                            if isinstance(iid, str) and iid.startswith('season-'):
+                                sid = iid.split('season-', 1)[1]
+                            # search for components that contain an episodes url
+                            episodes_url = None
+                            for c2 in (itm.get('components') or []):
+                                if not isinstance(c2, dict):
+                                    continue
+                                url_candidate = c2.get('url') or c2.get('itemsUrl') or c2.get('link', {}).get('href') if isinstance(c2.get('link', {}), dict) else None
+                                if url_candidate and 'episodes' in str(url_candidate) and 'seasonId' in str(url_candidate):
+                                    episodes_url = url_candidate
+                                    # attempt to extract seasonId from url
+                                    try:
+                                        parsed = urllib.parse.urlparse(url_candidate)
+                                        q = urllib.parse.parse_qs(parsed.query)
+                                        season_ids = q.get('seasonId') or q.get('seasonid') or q.get('season')
+                                        if season_ids:
+                                            sid = season_ids[0]
+                                    except Exception:
+                                        pass
+                                    break
+                            if not sid:
+                                # try to extract seasonId from any internal analytics or parameters
+                                params = itm.get('analytics') or itm.get('parameters') or {}
+                                if isinstance(params, dict):
+                                    sid = params.get('seasonId') or params.get('season')
+                            if sid:
+                                seasons.append({'id': sid, 'title': season_title, 'episodes_url': episodes_url})
+            except Exception:
+                pass
+
+            # If no explicit seasons discovered in the detail payload, attempt
+            # to derive seasons by fetching episodes and grouping them by
+            # season id/number. This mirrors the app behavior when the detail
+            # endpoint provides a flat episode list instead of explicit season
+            # sections.
+            if not seasons:
+                try:
+                    eps = self.get_series_episodes(series_id, limit=1000, offset=0) or []
+                    by_sid = {}
+                    for ep in eps:
+                        sid = ep.get('season_id') or ep.get('season') or ep.get('seasonNumber') or ep.get('season_number') or ''
+                        # normalize to string key
+                        key = str(sid) if sid is not None else ''
+                        if key == 'None':
+                            key = ''
+                        if key == '':
+                            key = '1'
+                        if key not in by_sid:
+                            # try to determine a human-friendly season number
+                            snum = None
+                            try:
+                                snum_src = ep.get('season_number') or ep.get('seasonNumber')
+                                if snum_src is None and str(key).isdigit():
+                                    snum_src = key
+                                if snum_src is not None:
+                                    snum = int(snum_src)
+                            except Exception:
+                                snum = None
+                            by_sid[key] = {'id': key, 'title': f"Season {snum}" if snum else f"Season {key}", 'episodes_url': None, 'season_number': snum}
+                    if by_sid:
+                        seasons = list(by_sid.values())
+                        try:
+                            seasons.sort(key=lambda x: (x.get('season_number') is None, x.get('season_number') or int(x.get('id') if str(x.get('id')).isdigit() else 0)))
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+            return {'id': series_id, 'title': title, 'description': desc, 'thumb': thumb, 'seasons': seasons, 'raw': data}
+        except Exception as e:
+            xbmc.log(f"NLZiet get_series_detail error for id={series_id}: {e}", xbmc.LOGERROR)
+            return {}
+
+    def get_series_episodes(self, series_id, season_id=None, limit=400, offset=0):
+        """Return episodes for a series/season using /v9/series/{id}/episodes."""
+        if not series_id:
+            return []
+        try:
+            params = {'limit': str(limit), 'offset': str(offset)}
+            if season_id:
+                params['seasonId'] = season_id
+            qs = urllib.parse.urlencode(params)
+            url = urllib.parse.urljoin(self.base_url, f'/v9/series/{series_id}/episodes') + '?' + qs
+            headers = {
+                'User-Agent': self.user_agent,
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': 'https://app.nlziet.nl/',
+                'Origin': 'https://app.nlziet.nl',
+                'nlziet-appname': 'WebApp',
+                'nlziet-appversion': '6.0.3',
+            }
+            token = self.get_access_token()
+            if token:
+                headers['Authorization'] = 'Bearer ' + token
+            req = urllib.request.Request(url, headers=headers)
+            with self._open_with_opener(self.opener, req, timeout=20) as r:
+                data = json.load(r)
+
+            items = data.get('data') or data.get('results') or data.get('items') or []
+
+            # Optional seasons metadata for mapping global episode numbers
+            # (e.g. "Afl. 7229") to season/local episode numbers.
+            seasons_list = []
+            try:
+                content_container = data.get('content') if isinstance(data, dict) else None
+                cs = None
+                if isinstance(content_container, dict):
+                    cs = content_container.get('seasons') or content_container.get('seasonList') or content_container.get('season_list')
+                if not cs and isinstance(data.get('seasons'), list):
+                    cs = data.get('seasons')
+                if isinstance(cs, list) and cs:
+                    for s in cs:
+                        try:
+                            sid = s.get('id') or s.get('seasonId') or s.get('season_id') or s.get('season') or ''
+                            title_s = s.get('title') or s.get('name') or s.get('label') or (f"Season {sid}" if sid else '')
+                            ep_count = s.get('episodeCount') or s.get('episode_count') or None
+                            if ep_count is not None:
+                                try:
+                                    ep_count = int(ep_count)
+                                except Exception:
+                                    ep_count = None
+                            seasons_list.append({'id': sid or title_s, 'title': title_s, 'episode_count': ep_count, 'start': None, 'end': None})
+                        except Exception:
+                            continue
+                    running = 0
+                    for s in seasons_list:
+                        if s.get('episode_count'):
+                            s['start'] = running + 1
+                            s['end'] = running + s['episode_count']
+                            running = s['end']
+            except Exception:
+                seasons_list = []
+
+            results = []
+            for item in items:
+                src = item.get('item') if isinstance(item, dict) and item.get('item') else item.get('content') if isinstance(item, dict) and item.get('content') else item
+                if not isinstance(src, dict):
+                    continue
+                content_id = src.get('id') or src.get('contentId') or src.get('content_id')
+                title = src.get('title') or src.get('name') or ''
+                thumb = src.get('posterUrl') or (src.get('image') or {}).get('portraitUrl') or (src.get('image') or {}).get('landscapeUrl') or src.get('thumbnail') or src.get('thumb')
+                desc = src.get('description') or src.get('plot') or src.get('summary') or ''
+                subtitle = src.get('subtitle') or src.get('subtitleText') or ''
+                duration = src.get('durationInSeconds') or src.get('duration') or None
+
+                # Try to extract season/episode metadata from common fields and
+                # fallbacks in item parameters/analytics.
+                season_id = src.get('seasonId') or src.get('season_id') or src.get('season') or None
+                season_number = src.get('seasonNumber') or src.get('season_number') or None
+                episode_number = src.get('episodeNumber') or src.get('episode') or src.get('number') or src.get('episodeIndex') or None
+                # fallback to analytics/parameters that sometimes include season/episode
+                try:
+                    params = (item.get('analytics') or item.get('parameters') or src.get('parameters') or {})
+                    if isinstance(params, dict):
+                        season_id = season_id or params.get('seasonId') or params.get('season') or params.get('season_id')
+                        season_number = season_number or params.get('seasonNumber') or params.get('season_number')
+                        episode_number = episode_number or params.get('episodeNumber') or params.get('episode') or params.get('number')
+                except Exception:
+                    pass
+
+                # Release/availability timestamps
+                release_date = src.get('availableFrom') or src.get('releaseDate') or src.get('publishedAt') or None
+                available_from = src.get('availableFrom') or src.get('startAt') or None
+                available_to = src.get('availableTo') or src.get('endAt') or None
+                season_title = None
+                # Prefer pre-formatted episode numbering when present in the
+                # payload (the official app exposes `formattedEpisodeNumbering`).
+                formatted = None
+                try:
+                    # common top-level key
+                    if isinstance(src, dict):
+                        formatted = src.get('formattedEpisodeNumbering') or src.get('formatted_episode_numbering')
+                    # inspect common nested containers
+                    if not formatted:
+                        for container in ('play', 'playback', 'item', 'seriesPlayEntity', 'video', 'data', 'asset'):
+                            part = src.get(container) if isinstance(src, dict) else None
+                            if isinstance(part, dict):
+                                formatted = part.get('formattedEpisodeNumbering') or part.get('formatted_episode_numbering')
+                                if formatted:
+                                    break
+                except Exception:
+                    formatted = None
+
+                # If the episode `subtitle` contains the canonical "S{season}:A{episode}"
+                # pattern (e.g. 'S1:A1') parse and prefer those numbers.
+                try:
+                    if not formatted and subtitle and isinstance(subtitle, str):
+                        m = re.search(r"S(\d+):A(\d+)", subtitle, re.I)
+                        if m:
+                            try:
+                                s_val = int(m.group(1))
+                                e_val = int(m.group(2))
+                                season_number = season_number or s_val
+                                episode_number = episode_number or e_val
+                                # use a normalized formatted string like S01E01
+                                formatted = f"S{ s_val:02d }E{ e_val:02d }"
+                                # try to find human-friendly season title
+                                try:
+                                    for s in seasons_list:
+                                        snum = None
+                                        sid = s.get('id')
+                                        if sid and str(sid).isdigit():
+                                            try:
+                                                snum = int(sid)
+                                            except Exception:
+                                                snum = None
+                                        if snum is None:
+                                            m2 = re.search(r"(\d+)", str(s.get('title') or ''))
+                                            if m2:
+                                                try:
+                                                    snum = int(m2.group(1))
+                                                except Exception:
+                                                    snum = None
+                                        if snum == s_val:
+                                            season_title = s.get('title')
+                                            break
+                                except Exception:
+                                    season_title = None
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
+                # Handle Dutch "Afl. 7229" soap/daily format: treat as global
+                # episode number. If we have seasons with episode counts we can
+                # map the global number to a season and local episode number.
+                try:
+                    if not formatted and subtitle and isinstance(subtitle, str):
+                        m = re.search(r"\bAfl\.?\s*(\d+)\b", subtitle, re.I)
+                        if m:
+                            try:
+                                ep_global = int(m.group(1))
+                            except Exception:
+                                ep_global = None
+                            if ep_global:
+                                mapped = False
+                                try:
+                                    for idx, s in enumerate(seasons_list):
+                                        if s.get('start') and s.get('end') and s['start'] <= ep_global <= s['end']:
+                                            # determine season number if possible
+                                            season_num = None
+                                            sid = s.get('id')
+                                            if sid and str(sid).isdigit():
+                                                try:
+                                                    season_num = int(sid)
+                                                except Exception:
+                                                    season_num = None
+                                            if season_num is None:
+                                                m2 = re.search(r"(\d+)", str(s.get('title') or ''))
+                                                if m2:
+                                                    try:
+                                                        season_num = int(m2.group(1))
+                                                    except Exception:
+                                                        season_num = None
+                                            local_ep = ep_global - s['start'] + 1
+                                            season_number = season_number or season_num or (idx + 1)
+                                            episode_number = episode_number or local_ep
+                                            formatted = f"S{ season_number:02d }E{ local_ep:02d }"
+                                            season_title = s.get('title')
+                                            mapped = True
+                                            break
+                                except Exception:
+                                    mapped = False
+                                if not mapped:
+                                    # fallback: present as a global episode
+                                    episode_number = episode_number or ep_global
+                                    formatted = f"Episode {ep_global}"
+                except Exception:
+                    pass
+
+                results.append({
+                    'id': content_id,
+                    'title': title,
+                    'thumb': thumb,
+                    'description': desc,
+                    'subtitle': subtitle,
+                    'duration': duration,
+                    'season_id': season_id,
+                    'season_number': season_number,
+                    'season_title': locals().get('season_title', None),
+                    'episode_number': episode_number,
+                    'formatted_episode_numbering': formatted,
+                    'release_date': release_date,
+                    'available_from': available_from,
+                    'available_to': available_to,
+                    'raw': src,
+                })
+            return results
+        except Exception as e:
+            xbmc.log(f"NLZiet get_series_episodes error for series={series_id} season={season_id}: {e}", xbmc.LOGERROR)
+            return []
