@@ -2908,6 +2908,12 @@ class NLZietAPI:
             if not date:
                 date = datetime.date.today().isoformat()
 
+            if start_time is not None:
+                start_dt = datetime.datetime.fromtimestamp(int(start_time))
+                start_date = start_dt.date().isoformat()
+                if start_date != date:
+                    date = start_date
+
             params = [('date', date)]
             if channel_ids:
                 if isinstance(channel_ids, (list, tuple)):

@@ -2574,6 +2574,7 @@ def play_item(content_id, fmt=None, st=None):
             try:
                 from datetime import datetime, timezone
                 # add 1 minute to st to ensure we get the current program if st is exactly at the start of a program
+                # add this offset as an addon setting
                 st_plus_1min = int(st) + 300
                 epg_map = api.get_current_programs(channel_ids=[content_id], start_time=st_plus_1min)
                 content = epg_map.get(content_id).get("current").get("raw").get("content").get("contentItemId")
