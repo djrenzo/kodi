@@ -45,10 +45,12 @@ DIALOG_SUBS_ADD_TITLE = '{} - Add Subtitles'
 DIALOG_SUBS_NEED_TMDB = (
     'No TMDB ID is set for this title.\n\n'
     'Long-press the folder and choose "Set show title/override",\n'
-    'select Movie, and enter the TMDB ID first.'
+    'then search TMDB and set the TMDB ID first.'
 )
 DIALOG_SUBS_NOT_FOUND = 'No subtitles found for TMDB ID {}.'
 DIALOG_SUBS_PICK = 'Choose subtitle'
+DIALOG_SUBS_PICK_VIDEO = 'Choose video file'
+DIALOG_SUBS_NO_VIDEO_FILES = 'No video files found in this library folder.'
 DIALOG_SUBS_BAD_RESULT = 'Subtitle result is missing a download URL.'
 DIALOG_SUBS_DOWNLOAD_FAILED = 'Failed to download subtitle.\nCheck the log for details.'
 

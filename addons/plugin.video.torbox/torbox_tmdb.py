@@ -7,11 +7,11 @@ import xbmc
 
 from torbox_common import log
 
-TMDB_SEARCH_URL = 'https://www.themoviedb.org/search/movie'
+TMDB_SEARCH_MOVIE_URL = 'https://www.themoviedb.org/search/movie'
+TMDB_SEARCH_TV_URL = 'https://www.themoviedb.org/search/tv'
 TMDB_RESULT_LIMIT = 10
 
 _CARD_START_RE = re.compile(r'data-object-id="[^"]+"')
-_ID_RE = re.compile(r'href="/movie/(?P<id>\d+)(?:-[^"]*)?"')
 _POSTER_SRC_RE = re.compile(r'https://media\.themoviedb\.org/t/p/w\d+_and_h\d+_face(?P<path>/[^\s"]+)')
 _PLOT_RE = re.compile(r'class="mt-4[^>]*>\s*<p>(?P<plot>.*?)</p>', re.DOTALL)
 _POSTER_BASE = 'https://media.themoviedb.org/t/p/w500'
@@ -28,7 +28,7 @@ def _clean_html_text(value):
     return _SPACE_RE.sub(' ', text).strip()
 
 
-def search_tmdb_movies(title, year=None, limit=TMDB_RESULT_LIMIT):
+def _search_tmdb(title, year=None, limit=TMDB_RESULT_LIMIT, search_url=TMDB_SEARCH_MOVIE_URL, media_type='movie'):
     query = (title or '').strip()
     if not query:
         return []
@@ -36,7 +36,7 @@ def search_tmdb_movies(title, year=None, limit=TMDB_RESULT_LIMIT):
     if year:
         query = '{} y:{}'.format(query, year)
 
-    url = '{}?{}'.format(TMDB_SEARCH_URL, urlencode({'query': query}))
+    url = '{}?{}'.format(search_url, urlencode({'query': query}))
     log('TMDB search query: {}'.format(url))
 
     try:
@@ -55,6 +55,7 @@ def search_tmdb_movies(title, year=None, limit=TMDB_RESULT_LIMIT):
 
     results = []
     seen_ids = set()
+    id_re = re.compile(r'href="/{}/(?P<id>\d+)(?:-[^"]*)?"'.format(media_type))
 
     card_starts = [match.start() for match in _CARD_START_RE.finditer(html)]
     card_starts.append(len(html))
@@ -62,7 +63,7 @@ def search_tmdb_movies(title, year=None, limit=TMDB_RESULT_LIMIT):
     for index in range(len(card_starts) - 1):
         chunk = html[card_starts[index]:card_starts[index + 1]]
 
-        id_match = _ID_RE.search(chunk)
+        id_match = id_re.search(chunk)
         if not id_match:
             continue
 
@@ -103,3 +104,11 @@ def search_tmdb_movies(title, year=None, limit=TMDB_RESULT_LIMIT):
             break
 
     return results
+
+
+def search_tmdb_movies(title, year=None, limit=TMDB_RESULT_LIMIT):
+    return _search_tmdb(title, year=year, limit=limit, search_url=TMDB_SEARCH_MOVIE_URL, media_type='movie')
+
+
+def search_tmdb_tvshows(title, year=None, limit=TMDB_RESULT_LIMIT):
+    return _search_tmdb(title, year=year, limit=limit, search_url=TMDB_SEARCH_TV_URL, media_type='tv')

@@ -31,7 +31,7 @@ from torbox_common import (
 from torbox_library import export_library
 from torbox_setup import add_account
 from torbox_subtitles import add_subtitles, find_local_subtitles
-from torbox_tmdb import search_tmdb_movies
+from torbox_tmdb import search_tmdb_movies, search_tmdb_tvshows
 from torbox_text import (
     CONTEXT_ADD_SUBTITLES,
     CONTEXT_REFRESH_LIBRARY,
@@ -336,6 +336,57 @@ def choose_tmdb_movie(title, year=None, existing_tmdb_id=''):
     }
 
 
+def choose_tmdb_tvshow(title, year=None, existing_tmdb_id=''):
+    dialog = xbmcgui.Dialog()
+    manual_default = existing_tmdb_id or ''
+
+    dialog.notification(APP_NAME, NOTIFY_SEARCHING_TMDB, xbmcgui.NOTIFICATION_INFO, 2000)
+    results = search_tmdb_tvshows(title, year)
+
+    if not results:
+        manual_tmdb_id = dialog.input(DIALOG_SET_TMDB, defaultt=manual_default)
+        if manual_tmdb_id is None:
+            return None
+        return {'id': manual_tmdb_id, 'year': None, 'poster_url': ''}
+
+    options = []
+    for result in results:
+        year_text = ' ({})'.format(result['year']) if result.get('year') else ''
+        item = xbmcgui.ListItem(
+            label='{}{}'.format(result['title'], year_text),
+            label2='TMDB {}'.format(result['id']),
+        )
+        poster_url = result.get('poster_url')
+        if poster_url:
+            item.setArt({'icon': poster_url, 'thumb': poster_url})
+        options.append(item)
+
+    options.append(
+        xbmcgui.ListItem(
+            label=DIALOG_MANUAL_TMDB,
+            label2='TMDB {}'.format(manual_default) if manual_default else '',
+        )
+    )
+
+    choice = dialog.select(DIALOG_PICK_TMDB.format(title[:40]), options, useDetails=True)
+    if choice < 0:
+        return None
+
+    if choice == len(results):
+        manual_tmdb_id = dialog.input(DIALOG_SET_TMDB, defaultt=manual_default)
+        if manual_tmdb_id is None:
+            return None
+        return {'id': manual_tmdb_id, 'year': None, 'poster_url': ''}
+
+    selected = results[choice]
+    return {
+        'id': selected['id'],
+        'year': selected.get('year'),
+        'poster_url': selected.get('poster_url', ''),
+        'plot': selected.get('plot', ''),
+    }
+
+
 def set_override(folder_name, account_index):
     del account_index
 
@@ -386,6 +437,18 @@ def set_override(folder_name, account_index):
         )
         if tvdb_id is None:
             return
+
+        tmdb_choice = choose_tmdb_tvshow(
+            title,
+            year=year_value,
+            existing_tmdb_id=existing.get('tmdb_id', ''),
+        )
+        if tmdb_choice is None:
+            return
+        tmdb_id = tmdb_choice.get('id', '')
+        tmdb_year = tmdb_choice.get('year')
+        if tmdb_year is not None and tmdb_year != year_value:
+            year_value = tmdb_year
     else:
         tmdb_choice = choose_tmdb_movie(
             title,

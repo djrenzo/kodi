@@ -7,7 +7,7 @@ import xbmc
 import xbmcgui
 import xbmcvfs
 
-from torbox_common import APP_NAME, load_overrides, log, save_overrides
+from torbox_common import APP_NAME, VIDEO_EXTS, extract_episode_info, load_overrides, log, save_overrides
 from torbox_library import get_library_folder_for
 from torbox_text import (
     DIALOG_LIBRARY_SUBS_EXPORT_FIRST,
@@ -16,8 +16,10 @@ from torbox_text import (
     DIALOG_SUBS_DOWNLOAD_FAILED,
     DIALOG_SUBS_EXISTING,
     DIALOG_SUBS_NEED_TMDB,
+    DIALOG_SUBS_NO_VIDEO_FILES,
     DIALOG_SUBS_NOT_FOUND,
     DIALOG_SUBS_PICK,
+    DIALOG_SUBS_PICK_VIDEO,
     NOTIFY_SEARCHING_SUBS,
     NOTIFY_SUBTITLE_SAVED,
 )
@@ -25,10 +27,43 @@ from torbox_text import (
 WYZIE_API = 'https://sub.wyzie.io/search'
 WYZIE_KEY = 'wyzie-gvo9qomam6re1xxww2krz89m7f0ww4ax'
 WYZIE_LIMIT = 10
+SUBTITLE_EXTS = ('.srt', '.ass', '.ssa', '.sub', '.vtt')
 
 
-def fetch_subtitles(tmdb_id, language='en'):
-    params = urlencode({'id': tmdb_id, 'format': 'srt', 'language': language, 'key': WYZIE_KEY})
+def _pick_video_basename(dialog, library_folder):
+    video_exts = set(VIDEO_EXTS)
+    video_exts.add('.strm')
+
+    candidates = []
+    try:
+        for filename in sorted(os.listdir(library_folder), key=lambda value: value.lower()):
+            root, ext = os.path.splitext(filename)
+            if ext.lower() in video_exts and root:
+                candidates.append(filename)
+    except Exception as exc:
+        log('pick_video_basename error: {}'.format(exc), xbmc.LOGWARNING)
+        return None
+
+    if not candidates:
+        return None
+
+    if len(candidates) == 1:
+        return os.path.splitext(candidates[0])[0]
+
+    choice = dialog.select(DIALOG_SUBS_PICK_VIDEO, candidates)
+    if choice < 0:
+        return ''
+    return os.path.splitext(candidates[choice])[0]
+
+
+def fetch_subtitles(tmdb_id, language='en', season=None, episode=None):
+    params_data = {'id': tmdb_id, 'format': 'srt', 'language': language, 'key': WYZIE_KEY}
+    if season is not None:
+        params_data['season'] = int(season)
+    if episode is not None:
+        params_data['episode'] = int(episode)
+
+    params = urlencode(params_data)
     url = '{}?{}'.format(WYZIE_API, params)
     log('Wyzie query: {}'.format(url))
 
@@ -67,17 +102,18 @@ def find_local_subtitles(strm_path):
         return []
 
     folder = os.path.dirname(strm_path)
-    sub_exts = ('.srt', '.ass', '.ssa', '.sub', '.vtt')
+    video_basename = os.path.splitext(os.path.basename(strm_path))[0]
     found = []
 
     try:
         for filename in os.listdir(folder):
-            if os.path.splitext(filename)[1].lower() in sub_exts:
+            root, ext = os.path.splitext(filename)
+            if root == video_basename and ext.lower() in SUBTITLE_EXTS:
                 found.append(os.path.join(folder, filename))
     except Exception as exc:
         log('find_local_subtitles error: {}'.format(exc), xbmc.LOGWARNING)
 
-    return found
+    return sorted(found, key=lambda value: value.lower())
 
 
 def add_subtitles(folder_name, account_index):
@@ -86,9 +122,23 @@ def add_subtitles(folder_name, account_index):
     overrides = load_overrides()
     override = overrides.get(folder_name, {})
     tmdb_id = override.get('tmdb_id', '').strip()
+    media_type = override.get('type', 'tvshow')
     subs = override.get('subs', [])
 
     dialog = xbmcgui.Dialog()
+    library_folder = get_library_folder_for(folder_name)
+    if not library_folder:
+        dialog.ok(APP_NAME, DIALOG_LIBRARY_SUBS_EXPORT_FIRST)
+        return
+
+    target_basename = _pick_video_basename(dialog, library_folder)
+    if target_basename == '':
+        return
+    if target_basename is None:
+        dialog.ok(APP_NAME, DIALOG_SUBS_NO_VIDEO_FILES)
+        return
+
+    target_filename = '{}.srt'.format(target_basename)
 
     def existing_label(result):
         hearing_impaired = ' [HI]' if result.get('hi') else ''
@@ -100,19 +150,13 @@ def add_subtitles(folder_name, account_index):
         if idx >= 0:
             chosen = subs[idx]
             subtitle_url = chosen['url']
-            filename = chosen.get('fileName')
 
-            library_folder = get_library_folder_for(folder_name)
-            if not library_folder:
-                dialog.ok(APP_NAME, DIALOG_LIBRARY_SUBS_EXPORT_FIRST)
-                return
-
-            dest_path = os.path.join(library_folder, filename)
+            dest_path = os.path.join(library_folder, target_filename)
             if not download_subtitle(subtitle_url, dest_path):
                 dialog.ok(APP_NAME, DIALOG_SUBS_DOWNLOAD_FAILED)
                 return
 
-            dialog.notification(APP_NAME, NOTIFY_SUBTITLE_SAVED.format(filename), xbmcgui.NOTIFICATION_INFO, 3000)
+            dialog.notification(APP_NAME, NOTIFY_SUBTITLE_SAVED.format(target_filename), xbmcgui.NOTIFICATION_INFO, 3000)
             log('Subtitle saved to {} and recorded in overrides'.format(dest_path))
             return
 
@@ -123,8 +167,16 @@ def add_subtitles(folder_name, account_index):
         )
         return
 
+    season = None
+    episode = None
+    if media_type == 'tvshow':
+        season, episode = extract_episode_info(target_basename)
+
     dialog.notification(APP_NAME, NOTIFY_SEARCHING_SUBS, xbmcgui.NOTIFICATION_INFO, 2000)
-    results = fetch_subtitles(tmdb_id)
+    results = fetch_subtitles(tmdb_id, season=season, episode=episode)
+    if not results and media_type == 'tvshow' and season is not None and episode is not None:
+        # Fallback for cases where provider has no episode-indexed result for the title.
+        results = fetch_subtitles(tmdb_id)
 
     if not results:
         dialog.ok(APP_NAME, DIALOG_SUBS_NOT_FOUND.format(tmdb_id))
@@ -146,17 +198,7 @@ def add_subtitles(folder_name, account_index):
         dialog.ok(APP_NAME, DIALOG_SUBS_BAD_RESULT)
         return
 
-    language_code = 'en'
-    file_name = chosen.get('fileName') or ''
-    filename_root = file_name.split('.')[0] if file_name else chosen.get('id', 'subtitle')
-    filename = '{}.{}.srt'.format(filename_root, language_code)
-
-    library_folder = get_library_folder_for(folder_name)
-    if not library_folder:
-        dialog.ok(APP_NAME, DIALOG_LIBRARY_SUBS_EXPORT_FIRST)
-        return
-
-    dest_path = os.path.join(library_folder, filename)
+    dest_path = os.path.join(library_folder, target_filename)
     if not download_subtitle(subtitle_url, dest_path):
         dialog.ok(APP_NAME, DIALOG_SUBS_DOWNLOAD_FAILED)
         return
@@ -166,7 +208,7 @@ def add_subtitles(folder_name, account_index):
         subs.append(
             {
                 'url': subtitle_url,
-                'fileName': filename,
+                'fileName': target_filename,
                 'language': chosen.get('language', 'en'),
                 'hi': chosen.get('isHearingImpaired', False),
             }
@@ -176,5 +218,5 @@ def add_subtitles(folder_name, account_index):
     overrides[folder_name] = override
     save_overrides(overrides)
 
-    dialog.notification(APP_NAME, NOTIFY_SUBTITLE_SAVED.format(filename), xbmcgui.NOTIFICATION_INFO, 3000)
+    dialog.notification(APP_NAME, NOTIFY_SUBTITLE_SAVED.format(target_filename), xbmcgui.NOTIFICATION_INFO, 3000)
     log('Subtitle saved to {} and recorded in overrides'.format(dest_path))
