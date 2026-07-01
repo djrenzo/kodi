@@ -49,6 +49,9 @@ DIALOG_SUBS_NEED_TMDB = (
 )
 DIALOG_SUBS_NOT_FOUND = 'No subtitles found for TMDB ID {}.'
 DIALOG_SUBS_PICK = 'Choose subtitle'
+DIALOG_SUBS_LANGUAGE = 'Subtitle language'
+DIALOG_SUBS_LANG_EN = 'English (en)'
+DIALOG_SUBS_LANG_ES = 'Spanish (es)'
 DIALOG_SUBS_PICK_VIDEO = 'Choose video file'
 DIALOG_SUBS_NO_VIDEO_FILES = 'No video files found in this library folder.'
 DIALOG_SUBS_BAD_RESULT = 'Subtitle result is missing a download URL.'

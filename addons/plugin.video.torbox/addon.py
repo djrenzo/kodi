@@ -447,6 +447,8 @@ def set_override(folder_name, account_index):
             return
         tmdb_id = tmdb_choice.get('id', '')
         tmdb_year = tmdb_choice.get('year')
+        tmdb_thumb = tmdb_choice.get('poster_url', '')
+        tmdb_plot = tmdb_choice.get('plot', '')
         if tmdb_year is not None and tmdb_year != year_value:
             year_value = tmdb_year
     else:
@@ -472,7 +474,7 @@ def set_override(folder_name, account_index):
         entry['tvdb_id'] = tvdb_id.strip()
     if tmdb_id and tmdb_id.strip():
         entry['tmdb_id'] = tmdb_id.strip()
-    if media_type == 'movie':
+    if media_type in ('movie', 'tvshow'):
         if tmdb_thumb:
             entry['thumb'] = tmdb_thumb
         elif existing.get('thumb'):

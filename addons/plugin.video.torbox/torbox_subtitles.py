@@ -15,6 +15,9 @@ from torbox_text import (
     DIALOG_SUBS_BAD_RESULT,
     DIALOG_SUBS_DOWNLOAD_FAILED,
     DIALOG_SUBS_EXISTING,
+    DIALOG_SUBS_LANG_EN,
+    DIALOG_SUBS_LANG_ES,
+    DIALOG_SUBS_LANGUAGE,
     DIALOG_SUBS_NEED_TMDB,
     DIALOG_SUBS_NO_VIDEO_FILES,
     DIALOG_SUBS_NOT_FOUND,
@@ -140,15 +143,23 @@ def add_subtitles(folder_name, account_index):
 
     target_filename = '{}.srt'.format(target_basename)
 
+    language_options = [DIALOG_SUBS_LANG_EN, DIALOG_SUBS_LANG_ES]
+    language_codes = ['en', 'es']
+    lang_idx = dialog.select(DIALOG_SUBS_LANGUAGE, language_options)
+    if lang_idx < 0:
+        return
+    language_code = language_codes[lang_idx]
+
     def existing_label(result):
         hearing_impaired = ' [HI]' if result.get('hi') else ''
         language = ' ({})'.format(result['language']) if result.get('language') else ''
         return '{}{}{}'.format(result.get('fileName'), hearing_impaired, language)
 
-    if subs:
-        idx = dialog.select(DIALOG_SUBS_EXISTING, [existing_label(result) for result in subs])
+    existing_subs = [result for result in subs if result.get('language', 'en') == language_code]
+    if existing_subs:
+        idx = dialog.select(DIALOG_SUBS_EXISTING, [existing_label(result) for result in existing_subs])
         if idx >= 0:
-            chosen = subs[idx]
+            chosen = existing_subs[idx]
             subtitle_url = chosen['url']
 
             dest_path = os.path.join(library_folder, target_filename)
@@ -173,10 +184,10 @@ def add_subtitles(folder_name, account_index):
         season, episode = extract_episode_info(target_basename)
 
     dialog.notification(APP_NAME, NOTIFY_SEARCHING_SUBS, xbmcgui.NOTIFICATION_INFO, 2000)
-    results = fetch_subtitles(tmdb_id, season=season, episode=episode)
+    results = fetch_subtitles(tmdb_id, language=language_code, season=season, episode=episode)
     if not results and media_type == 'tvshow' and season is not None and episode is not None:
         # Fallback for cases where provider has no episode-indexed result for the title.
-        results = fetch_subtitles(tmdb_id)
+        results = fetch_subtitles(tmdb_id, language=language_code)
 
     if not results:
         dialog.ok(APP_NAME, DIALOG_SUBS_NOT_FOUND.format(tmdb_id))
@@ -209,7 +220,7 @@ def add_subtitles(folder_name, account_index):
             {
                 'url': subtitle_url,
                 'fileName': target_filename,
-                'language': chosen.get('language', 'en'),
+                'language': chosen.get('language', language_code),
                 'hi': chosen.get('isHearingImpaired', False),
             }
         )
