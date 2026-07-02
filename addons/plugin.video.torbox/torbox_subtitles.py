@@ -17,6 +17,7 @@ from torbox_text import (
     DIALOG_SUBS_EXISTING,
     DIALOG_SUBS_LANG_EN,
     DIALOG_SUBS_LANG_ES,
+    DIALOG_SUBS_LANG_SP,
     DIALOG_SUBS_LANGUAGE,
     DIALOG_SUBS_NEED_TMDB,
     DIALOG_SUBS_NO_VIDEO_FILES,
@@ -143,8 +144,8 @@ def add_subtitles(folder_name, account_index):
 
     target_filename = '{}.srt'.format(target_basename)
 
-    language_options = [DIALOG_SUBS_LANG_EN, DIALOG_SUBS_LANG_ES]
-    language_codes = ['en', 'es']
+    language_options = [DIALOG_SUBS_LANG_EN, DIALOG_SUBS_LANG_ES, DIALOG_SUBS_LANG_SP]
+    language_codes = ['en', 'es', 'sp']
     lang_idx = dialog.select(DIALOG_SUBS_LANGUAGE, language_options)
     if lang_idx < 0:
         return
