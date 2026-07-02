@@ -31,7 +31,7 @@ from torbox_common import (
 from torbox_library import export_library
 from torbox_setup import add_account
 from torbox_subtitles import add_subtitles, find_local_subtitles
-from torbox_tmdb import search_tmdb_movies, search_tmdb_tvshows
+from torbox_tmdb import get_tvdb_id_from_tmdb, search_tmdb_movies, search_tmdb_tvshows
 from torbox_text import (
     CONTEXT_ADD_SUBTITLES,
     CONTEXT_REFRESH_LIBRARY,
@@ -431,26 +431,38 @@ def set_override(folder_name, account_index):
             year_value = None
 
     if media_type == 'tvshow':
-        tvdb_id = dialog.input(
-            DIALOG_SET_TVDB,
-            defaultt=existing.get('tvdb_id', ''),
-        )
-        if tvdb_id is None:
-            return
-
         tmdb_choice = choose_tmdb_tvshow(
             title,
             year=year_value,
             existing_tmdb_id=existing.get('tmdb_id', ''),
         )
         if tmdb_choice is None:
-            return
-        tmdb_id = tmdb_choice.get('id', '')
-        tmdb_year = tmdb_choice.get('year')
-        tmdb_thumb = tmdb_choice.get('poster_url', '')
-        tmdb_plot = tmdb_choice.get('plot', '')
-        if tmdb_year is not None and tmdb_year != year_value:
-            year_value = tmdb_year
+            # User cancelled TMDB selection, show TVDB dialog as fallback
+            tvdb_id = dialog.input(
+                DIALOG_SET_TVDB,
+                defaultt=existing.get('tvdb_id', ''),
+            )
+            if tvdb_id is None:
+                return
+        else:
+            tmdb_id = tmdb_choice.get('id', '')
+            tmdb_year = tmdb_choice.get('year')
+            tmdb_thumb = tmdb_choice.get('poster_url', '')
+            tmdb_plot = tmdb_choice.get('plot', '')
+            if tmdb_year is not None and tmdb_year != year_value:
+                year_value = tmdb_year
+
+            # Try to fetch TVDB ID from TMDB
+            tvdb_id = get_tvdb_id_from_tmdb(tmdb_id) or ''
+
+            # If TVDB ID not found, show TVDB dialog as fallback
+            if not tvdb_id:
+                tvdb_id = dialog.input(
+                    DIALOG_SET_TVDB,
+                    defaultt=existing.get('tvdb_id', ''),
+                )
+                if tvdb_id is None:
+                    return
     else:
         tmdb_choice = choose_tmdb_movie(
             title,

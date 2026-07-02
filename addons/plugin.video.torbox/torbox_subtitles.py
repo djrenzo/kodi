@@ -112,7 +112,7 @@ def find_local_subtitles(strm_path):
     try:
         for filename in os.listdir(folder):
             root, ext = os.path.splitext(filename)
-            if root == video_basename and ext.lower() in SUBTITLE_EXTS:
+            if root.startswith(video_basename) and ext.lower() in SUBTITLE_EXTS:
                 found.append(os.path.join(folder, filename))
     except Exception as exc:
         log('find_local_subtitles error: {}'.format(exc), xbmc.LOGWARNING)
@@ -142,14 +142,14 @@ def add_subtitles(folder_name, account_index):
         dialog.ok(APP_NAME, DIALOG_SUBS_NO_VIDEO_FILES)
         return
 
-    target_filename = '{}.srt'.format(target_basename)
-
     language_options = [DIALOG_SUBS_LANG_EN, DIALOG_SUBS_LANG_ES, DIALOG_SUBS_LANG_SP]
     language_codes = ['en', 'es', 'sp']
     lang_idx = dialog.select(DIALOG_SUBS_LANGUAGE, language_options)
     if lang_idx < 0:
         return
     language_code = language_codes[lang_idx]
+
+    target_filename = '{}.{}.srt'.format(target_basename, language_code)
 
     def existing_label(result):
         hearing_impaired = ' [HI]' if result.get('hi') else ''

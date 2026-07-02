@@ -112,3 +112,37 @@ def search_tmdb_movies(title, year=None, limit=TMDB_RESULT_LIMIT):
 
 def search_tmdb_tvshows(title, year=None, limit=TMDB_RESULT_LIMIT):
     return _search_tmdb(title, year=year, limit=limit, search_url=TMDB_SEARCH_TV_URL, media_type='tv')
+
+
+def get_tvdb_id_from_tmdb(tmdb_id):
+    """Fetch TVDB ID from a TMDB TV show ID by scraping the show page."""
+    if not tmdb_id or not str(tmdb_id).strip():
+        return None
+
+    try:
+        url = 'https://www.themoviedb.org/tv/{}'.format(tmdb_id)
+        log('Fetching TVDB ID from TMDB show page: {}'.format(url))
+
+        req = Request(
+            url,
+            headers={
+                'User-Agent': 'Kodi/TorBox-Plugin',
+                'Accept-Language': 'en-US,en;q=0.8',
+            },
+        )
+        response = urlopen(req, timeout=20)
+        html = response.read().decode('utf-8', errors='ignore')
+
+        # Look for TVDB ID in the external IDs section
+        # Pattern: data-testid="external_link" with href containing thetvdb.com/series
+        tvdb_re = re.compile(r'thetvdb\.com/series/(\d+)')
+        match = tvdb_re.search(html)
+        if match:
+            return match.group(1)
+
+        log('TVDB ID not found for TMDB ID: {}'.format(tmdb_id), xbmc.LOGWARNING)
+        return None
+
+    except Exception as exc:
+        log('Error fetching TVDB ID from TMDB: {}'.format(exc), xbmc.LOGWARNING)
+        return None
