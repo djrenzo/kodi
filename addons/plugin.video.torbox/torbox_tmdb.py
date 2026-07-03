@@ -5,6 +5,7 @@ from urllib.request import Request, urlopen
 import json
 
 import xbmc
+import xbmcgui
 
 from torbox_common import log
 
@@ -143,6 +144,9 @@ def get_tvdb_id_from_tmdb(tmdb_id, media_type: str = "tv"):
         request = Request(url, headers={"Accept": "application/json"})
         with urlopen(request, timeout=10) as response:
             data = json.loads(response.read().decode("utf-8"))
+
+        dialog = xbmcgui.Dialog()
+        dialog.ok(str(data))
     
         tvdb_id = data.get("tvdb_id")
 
