@@ -5,7 +5,6 @@ from urllib.request import Request, urlopen
 import json
 
 import xbmc
-import xbmcgui
 
 from torbox_common import log
 
@@ -124,7 +123,6 @@ def get_tvdb_id_from_tmdb(tmdb_id, media_type: str = "tv"):
  
     Args:
         tmdb_id: The TMDB ID of the show (or movie).
-        api_key: Your TMDB v3 API key.
         media_type: "tv" for TV shows (default) or "movie" for movies.
                     Note: movies don't have TVDB IDs in TMDB's system;
                     this only makes sense for media_type="tv".
@@ -138,15 +136,17 @@ def get_tvdb_id_from_tmdb(tmdb_id, media_type: str = "tv"):
                                  TMDB ID not found -> 404).
     """
     try:
-        query = urlencode({"api_key": TMDB_KEY})
-        url = f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}/external_ids?{query}"
-    
-        request = Request(url, headers={"Accept": "application/json"})
+        url = f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}/external_ids"
+ 
+        request = Request(
+            url,
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {TMDB_KEY}",
+            },
+        )
         with urlopen(request, timeout=10) as response:
             data = json.loads(response.read().decode("utf-8"))
-
-        dialog = xbmcgui.Dialog()
-        dialog.ok(str(data))
     
         tvdb_id = data.get("tvdb_id")
 
