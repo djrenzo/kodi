@@ -151,7 +151,7 @@ def get_tvdb_id_from_tmdb(tmdb_id, media_type: str = "tv"):
         tvdb_id = data.get("tvdb_id")
 
         if tvdb_id is not None:
-            return tvdb_id
+            return str(tvdb_id)
 
         log('TVDB ID not found for TMDB ID: {}'.format(tmdb_id), xbmc.LOGWARNING)
         return None
