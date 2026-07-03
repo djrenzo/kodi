@@ -2,10 +2,13 @@ import re
 from html import unescape
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+import json
 
 import xbmc
 
 from torbox_common import log
+
+TMDB_KEY = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMDUxYjA5Nzc5Y2JiNDI1NjUyMmNhYjQzZTE4YzY1NSIsIm5iZiI6MTc3NTIzNzAxMC43NDg5OTk4LCJzdWIiOiI2OWNmZjc5Mjg4ZjBhMDQ1NDRkMjk4N2YiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.igCod8FKscZMklnvK9oiyfFMjy0Eyym50sGrj0knX4c"
 
 TMDB_SEARCH_MOVIE_URL = 'https://www.themoviedb.org/search/movie'
 TMDB_SEARCH_TV_URL = 'https://www.themoviedb.org/search/tv'
@@ -114,31 +117,37 @@ def search_tmdb_tvshows(title, year=None, limit=TMDB_RESULT_LIMIT):
     return _search_tmdb(title, year=year, limit=limit, search_url=TMDB_SEARCH_TV_URL, media_type='tv')
 
 
-def get_tvdb_id_from_tmdb(tmdb_id):
-    """Fetch TVDB ID from a TMDB TV show ID by scraping the show page."""
-    if not tmdb_id or not str(tmdb_id).strip():
-        return None
-
+def get_tvdb_id_from_tmdb(tmdb_id, media_type: str = "tv"):
+    """
+    Return the TVDB ID for a given TMDB ID, or None if not found.
+ 
+    Args:
+        tmdb_id: The TMDB ID of the show (or movie).
+        api_key: Your TMDB v3 API key.
+        media_type: "tv" for TV shows (default) or "movie" for movies.
+                    Note: movies don't have TVDB IDs in TMDB's system;
+                    this only makes sense for media_type="tv".
+ 
+    Returns:
+        The TVDB ID as an int, or None if TMDB has no TVDB ID on file
+        (or the TMDB ID doesn't exist).
+ 
+    Raises:
+        urllib.error.HTTPError: if the request fails (e.g. invalid API key,
+                                 TMDB ID not found -> 404).
+    """
     try:
-        url = 'https://www.themoviedb.org/tv/{}'.format(tmdb_id)
-        log('Fetching TVDB ID from TMDB show page: {}'.format(url))
+        query = urlencode({"api_key": TMDB_KEY})
+        url = f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}/external_ids?{query}"
+    
+        request = Request(url, headers={"Accept": "application/json"})
+        with urlopen(request, timeout=10) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    
+        tvdb_id = data.get("tvdb_id")
 
-        req = Request(
-            url,
-            headers={
-                'User-Agent': 'Kodi/TorBox-Plugin',
-                'Accept-Language': 'en-US,en;q=0.8',
-            },
-        )
-        response = urlopen(req, timeout=20)
-        html = response.read().decode('utf-8', errors='ignore')
-
-        # Look for TVDB ID in the external IDs section
-        # Pattern: data-testid="external_link" with href containing thetvdb.com/series
-        tvdb_re = re.compile(r'thetvdb\.com/series/(\d+)')
-        match = tvdb_re.search(html)
-        if match:
-            return match.group(1)
+        if tvdb_id is not None:
+            return tvdb_id
 
         log('TVDB ID not found for TMDB ID: {}'.format(tmdb_id), xbmc.LOGWARNING)
         return None

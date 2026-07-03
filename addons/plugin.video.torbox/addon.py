@@ -167,6 +167,8 @@ def list_directory(account_index, remote_path, is_library_root=False):
                 display_label = '{} ({})'.format(display_label, year)
             if tmdb_id:
                 display_label = '{} [{}]'.format(display_label, tmdb_id)
+            if tvdb_id:
+                display_label = display_label + " {" + tvdb_id + "}"
 
             li = xbmcgui.ListItem(label=display_label)
             info = {

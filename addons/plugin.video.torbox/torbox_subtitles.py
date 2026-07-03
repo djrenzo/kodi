@@ -32,6 +32,9 @@ WYZIE_API = 'https://sub.wyzie.io/search'
 WYZIE_KEY = 'wyzie-gvo9qomam6re1xxww2krz89m7f0ww4ax'
 WYZIE_LIMIT = 10
 SUBTITLE_EXTS = ('.srt', '.ass', '.ssa', '.sub', '.vtt')
+SRT_LANG_CODES = {"en": "en",
+                  "es": "es",
+                  "sp": "es"}
 
 
 def _pick_video_basename(dialog, library_folder):
@@ -149,7 +152,7 @@ def add_subtitles(folder_name, account_index):
         return
     language_code = language_codes[lang_idx]
 
-    target_filename = '{}.{}.srt'.format(target_basename, language_code)
+    target_filename = '{}.{}.srt'.format(target_basename, SRT_LANG_CODES[language_code])
 
     def existing_label(result):
         hearing_impaired = ' [HI]' if result.get('hi') else ''
