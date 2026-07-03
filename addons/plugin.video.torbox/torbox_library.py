@@ -75,17 +75,21 @@ def write_text_file(path, content):
         fh.write(content)
 
 
-def write_tvshow_nfo(show_folder, title, tvdb_id=None):
-    if not tvdb_id:
+def write_tvshow_nfo(show_folder, title, tvdb_id=None, tmdb_id=None):
+    if not tvdb_id and not tmdb_id:
         return
 
     xml = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<tvshow>',
         '  <title>{}</title>'.format(title),
-        '  <uniqueid type="tvdb" default="true">{}</uniqueid>'.format(tvdb_id),
-        '</tvshow>',
     ]
+    if tvdb_id:
+        xml.append('  <uniqueid type="tvdb" default="true">{}</uniqueid>'.format(tvdb_id))
+    if tmdb_id:
+        xml.append('  <uniqueid type="tmdb">{}</uniqueid>'.format(tmdb_id))
+    xml.append('</tvshow>')
+
     write_text_file(os.path.join(show_folder, 'tvshow.nfo'), '\n'.join(xml))
 
 
@@ -251,7 +255,7 @@ def export_library(account_index):
         if not xbmcvfs.exists(show_folder):
             xbmcvfs.mkdirs(show_folder)
 
-        write_tvshow_nfo(show_folder, clean_title, tvdb_id)
+        write_tvshow_nfo(show_folder, clean_title, tvdb_id, tmdb_id)
 
         for episode in walk_webdav(account, child_path):
             season, episode_no = extract_episode_info(episode['name'])
