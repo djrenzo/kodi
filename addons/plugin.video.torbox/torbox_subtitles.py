@@ -159,7 +159,7 @@ def add_subtitles(folder_name, account_index):
         language = ' ({})'.format(result['language']) if result.get('language') else ''
         return '{}{}{}'.format(result.get('fileName'), hearing_impaired, language)
 
-    existing_subs = [result for result in subs if result.get('language', 'en') == language_code]
+    existing_subs = [result for result in subs if result.get('language', 'en') == language_code and result.get('fileName', '').startswith(target_basename)]
     if existing_subs:
         idx = dialog.select(DIALOG_SUBS_EXISTING, [existing_label(result) for result in existing_subs])
         if idx >= 0:
