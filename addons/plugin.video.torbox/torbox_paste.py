@@ -1,19 +1,25 @@
 """
-Uploads a local text/JSON file to 0x0.st (https://0x0.st), an anonymous
-file-paste service that needs no API key or token, and returns the short
-URL it hands back. That URL can be curled directly (it serves the raw file
-content, not an HTML page), so it's ready to hand to a GitHub workflow
-as a `workflow_dispatch` input.
+Uploads a local text/JSON file to catbox.moe, an anonymous file host that
+needs no API key or token, and returns the short URL it hands back. That
+URL can be curled directly (it serves the raw file content, not an HTML
+page), so it's ready to hand to a GitHub workflow as a `workflow_dispatch`
+input.
 
-0x0.st specifics worth knowing:
-- No auth required, but it DOES require a descriptive User-Agent or it
-  will reject the request (403) as abuse prevention. Set USER_AGENT below
-  to something identifying your addon (name + a contact/repo URL).
-- Retention is size-based: small files (like a config/JSON) get the
-  minimum retention, currently 30 days - plenty of time for a workflow
-  to pick it up shortly after you generate the link.
-- The returned URL is short (e.g. https://0x0.st/abcd.json) and serves
-  the raw file directly, so `curl -sL <url>` gets you the file contents.
+catbox.moe specifics worth knowing:
+- No auth required for uploads - just omit the `userhash` field in the
+  POST and it uploads anonymously. (A userhash only matters if you want
+  to later manage/delete the file from an account, which we don't need
+  here.)
+- Files persist indefinitely (no expiry), unlike some paste services, so
+  there's no race to beat before a workflow picks it up.
+- Max file size is 200MB, far more than needed for a config/JSON file.
+- Blocks a short list of file types (mainly executables) - plain
+  text/JSON is fine.
+
+(Note: 0x0.st, an older no-key paste service, has had reliability
+problems recently, including reports of the service being down/
+overwhelmed by bots - that's most likely the source of a 503 if you were
+using it. catbox.moe is the more actively maintained alternative.)
 """
 
 import mimetypes
@@ -21,10 +27,11 @@ import os
 import uuid
 from urllib.request import Request, urlopen
 
-PASTE_URL = "https://0x0.st"
+UPLOAD_URL = "https://catbox.moe/user/api.php"
 
-# Customize this - 0x0.st blocks generic/missing User-Agents.
-USER_AGENT = "kodi-addon-config-sync/1.0 (+https://github.com/yourname/yourrepo)"
+# catbox.moe doesn't require a descriptive User-Agent the way 0x0.st did,
+# but setting one is still good practice / easier to debug in logs.
+USER_AGENT = "kodi-addon-config-sync/1.0"
 
 
 def _build_multipart_body(file_path: str) -> tuple[bytes, str]:
@@ -36,10 +43,20 @@ def _build_multipart_body(file_path: str) -> tuple[bytes, str]:
     with open(file_path, "rb") as f:
         file_bytes = f.read()
 
+    def field(name: str, value: str) -> bytes:
+        return (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
+            f"{value}\r\n"
+        ).encode()
+
     parts = []
+    # reqtype=fileupload tells catbox this is a file upload.
+    parts.append(field("reqtype", "fileupload"))
+    # No "userhash" field at all -> anonymous upload.
     parts.append(f"--{boundary}\r\n".encode())
     parts.append(
-        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode()
+        f'Content-Disposition: form-data; name="fileToUpload"; filename="{filename}"\r\n'.encode()
     )
     parts.append(f"Content-Type: {content_type}\r\n\r\n".encode())
     parts.append(file_bytes)
@@ -52,7 +69,7 @@ def _build_multipart_body(file_path: str) -> tuple[bytes, str]:
 
 def paste_file(file_path: str) -> str:
     """
-    Upload a local file to 0x0.st and return the short URL to it.
+    Upload a local file to catbox.moe and return the short URL to it.
 
     Args:
         file_path: Path to the local text/JSON file (e.g. somewhere under
@@ -60,13 +77,13 @@ def paste_file(file_path: str) -> str:
 
     Returns:
         The short URL (str) that serves the raw file content, e.g.
-        "https://0x0.st/abcd.json"
+        "https://files.catbox.moe/abcd12.json"
 
     Raises:
         FileNotFoundError: if file_path doesn't exist.
-        urllib.error.HTTPError: if the upload is rejected (e.g. missing/
-                                 blocked User-Agent, file too large, or
-                                 the service is rate-limiting you).
+        urllib.error.HTTPError: if the upload is rejected (e.g. file too
+                                 large, blocked file type, or the service
+                                 is having issues).
     """
     if not os.path.isfile(file_path):
         raise FileNotFoundError(file_path)
@@ -74,7 +91,7 @@ def paste_file(file_path: str) -> str:
     body, content_type_header = _build_multipart_body(file_path)
 
     request = Request(
-        PASTE_URL,
+        UPLOAD_URL,
         data=body,
         method="POST",
         headers={
