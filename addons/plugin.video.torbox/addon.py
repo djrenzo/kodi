@@ -24,6 +24,7 @@ from torbox_common import (
     get_account,
     get_accounts,
     get_params,
+    import_overrides,
     load_overrides,
     log,
     save_overrides,
@@ -54,6 +55,7 @@ from torbox_text import (
     MENU_ACCOUNT_BROWSE,
     MENU_ACCOUNT_EXPORT,
     MENU_ADD_ACCOUNT,
+    MENU_IMPORT_OVERRIDES,
     MENU_MANAGE_OVERRIDES,
     MENU_EXPORT_OVERRIDES,
     MENU_SETTINGS,
@@ -104,6 +106,9 @@ def list_accounts():
 
     li = xbmcgui.ListItem(label=MENU_EXPORT_OVERRIDES)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'export_overrides'}), li, isFolder=False)
+
+    li = xbmcgui.ListItem(label=MENU_IMPORT_OVERRIDES)
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'import_overrides'}), li, isFolder=False)
 
     li = xbmcgui.ListItem(label=MENU_SETTINGS)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'settings'}), li, isFolder=False)
@@ -577,6 +582,8 @@ def router():
         view_overrides()
     elif action == 'export_overrides':
         export_overrides()
+    elif action == 'import_overrides':
+        import_overrides()
     elif action == 'add_account':
         add_account(_get_account_param(params))
     elif action == 'settings':

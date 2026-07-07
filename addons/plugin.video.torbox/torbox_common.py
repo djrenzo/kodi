@@ -125,6 +125,61 @@ def save_overrides(data):
 def export_overrides():
     return paste_and_show_dialog(OVERRIDES_FILE)
 
+def import_overrides():
+    """
+    Fetches the JSON file from the URL configured in addon settings
+    ('library_overrides_path') and saves it locally via save_overrides,
+    overwriting any existing local copy.
+    """
+    import xbmcgui
+    from urllib.error import HTTPError, URLError
+    from urllib.request import Request, urlopen
+
+    url = ADDON.getSettingString('library_overrides_path').strip()
+ 
+    if not url:
+        log('import_overrides: no library_overrides_path configured', xbmc.LOGWARNING)
+        xbmcgui.Dialog().notification(
+            ADDON.getAddonInfo('name'),
+            'No overrides URL configured',
+            xbmcgui.NOTIFICATION_WARNING,
+        )
+        return False
+ 
+    try:
+        request = Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urlopen(request, timeout=15) as response:
+            raw = response.read().decode('utf-8')
+    except (HTTPError, URLError) as exc:
+        log('import_overrides: failed to fetch {}: {}'.format(url, exc), xbmc.LOGWARNING)
+        xbmcgui.Dialog().notification(
+            ADDON.getAddonInfo('name'),
+            'Failed to download overrides',
+            xbmcgui.NOTIFICATION_ERROR,
+        )
+        return False
+ 
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        log('import_overrides: invalid JSON from {}: {}'.format(url, exc), xbmc.LOGWARNING)
+        xbmcgui.Dialog().notification(
+            ADDON.getAddonInfo('name'),
+            'Overrides file is not valid JSON',
+            xbmcgui.NOTIFICATION_ERROR,
+        )
+        return False
+ 
+    save_overrides(data)
+ 
+    log('import_overrides: successfully imported overrides from {}'.format(url))
+    xbmcgui.Dialog().notification(
+        ADDON.getAddonInfo('name'),
+        'Overrides imported successfully',
+        xbmcgui.NOTIFICATION_INFO,
+    )
+    return True
+
 
 def clean_show_name(raw_name):
     value = raw_name
