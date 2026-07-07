@@ -4,6 +4,7 @@ MENU_ACCOUNT_BROWSE = '[B]{} - Browse[/B]'
 MENU_ACCOUNT_EXPORT = '{} - Export Library'
 MENU_ADD_ACCOUNT = '[COLOR springgreen]Add account {} via Phone[/COLOR]'
 MENU_MANAGE_OVERRIDES = '[COLOR yellow]Manage show overrides[/COLOR]'
+MENU_EXPORT_OVERRIDES = '[COLOR yellow]Export overrides[/COLOR]'
 MENU_SETTINGS = '[COLOR gray]Settings[/COLOR]'
 
 CONTEXT_SET_OVERRIDE = 'Set show title/override'

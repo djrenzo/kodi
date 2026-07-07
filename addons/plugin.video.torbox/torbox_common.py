@@ -10,6 +10,8 @@ import xbmc
 import xbmcaddon
 import xbmcvfs
 
+from torbox_paste import paste_and_show_dialog
+
 ADDON = xbmcaddon.Addon()
 ADDON_ID = ADDON.getAddonInfo('id')
 ADDON_PATH = xbmcvfs.translatePath(ADDON.getAddonInfo('path'))
@@ -118,6 +120,10 @@ def save_overrides(data):
             f.write(json.dumps(data, indent=2))
     except Exception as exc:
         log('Failed to save overrides: {}'.format(exc), xbmc.LOGWARNING)
+
+
+def export_overrides():
+    return paste_and_show_dialog(OVERRIDES_FILE)
 
 
 def clean_show_name(raw_name):
