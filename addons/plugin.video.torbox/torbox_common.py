@@ -233,21 +233,32 @@ def import_overrides():
             
             if ret:
                 # First, find the account that contains this folder and export it
-                from torbox_library import export_library_item, walk_webdav
+                from torbox_library import export_library_item
+                from torbox_webdav import parse_propfind, propfind
                 
                 accounts = get_accounts()
                 account_found = False
                 
                 for account in accounts:
                     try:
-                        for item in walk_webdav(account, '/'):
-                            if item['name'] == folder_name and item['is_collection']:
+                        root_xml = propfind(account['url'] + '/', account['username'], account['password'], depth=1)
+                        if root_xml is None:
+                            continue
+                        
+                        root_items = parse_propfind(root_xml, account['url'], '/')
+                        for root_item in root_items:
+                            if not root_item.get('is_collection'):
+                                continue
+                            
+                            raw_name = root_item.get('name')
+                            if raw_name == folder_name:
                                 # Found it! Export this item to the library
-                                remote_path = item.get('path', '')
+                                remote_path = root_item.get('path', '')
                                 export_library_item(account['index'], folder_name, remote_path)
                                 account_found = True
                                 log('import_overrides: exported collection {} via account {}'.format(folder_name, account['index']))
                                 break
+                        
                         if account_found:
                             break
                     except Exception as exc:
