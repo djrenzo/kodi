@@ -3,6 +3,7 @@ import json
 import os
 import re
 import sys
+import time
 from typing import List, Optional, TypedDict
 from urllib.parse import urlencode
 
@@ -132,6 +133,10 @@ def export_overrides():
     export_file = os.path.join(PROFILE_PATH, 'overrides.export.json')
     with open(export_file, 'w', encoding='utf-8') as fh:
         json.dump(data, fh, indent=2)
+        fh.write('\n')
+        # Keep JSON semantics identical while changing raw bytes each export.
+        # This avoids Catbox serving a previously corrupted deduplicated object.
+        fh.write(' ' * ((time.time_ns() % 11) + 1))
         fh.write('\n')
 
     # If no overrides exist, upload a minimal valid JSON object instead of an empty file.
