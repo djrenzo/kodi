@@ -28,6 +28,7 @@ import uuid
 from urllib.request import Request, urlopen
 
 UPLOAD_URL = "https://catbox.moe/user/api.php"
+LITTERBOX_UPLOAD_URL = "https://litterbox.catbox.moe/resources/internals/api.php"
 
 # catbox.moe doesn't require a descriptive User-Agent the way 0x0.st did,
 # but setting one is still good practice / easier to debug in logs.
@@ -67,6 +68,61 @@ def _build_multipart_body(file_path: str) -> tuple[bytes, str]:
     return body, content_type_header
 
 
+def _build_multipart_body_with_fields(file_path: str, fields) -> tuple[bytes, str]:
+    """Build multipart/form-data body with caller-provided form fields."""
+    boundary = uuid.uuid4().hex
+    filename = os.path.basename(file_path)
+    content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
+    with open(file_path, "rb") as f:
+        file_bytes = f.read()
+
+    parts = []
+    for name, value in fields.items():
+        parts.append(f"--{boundary}\r\n".encode())
+        parts.append(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode())
+        parts.append(f"{value}\r\n".encode())
+
+    parts.append(f"--{boundary}\r\n".encode())
+    parts.append(f'Content-Disposition: form-data; name="fileToUpload"; filename="{filename}"\r\n'.encode())
+    parts.append(f"Content-Type: {content_type}\r\n\r\n".encode())
+    parts.append(file_bytes)
+    parts.append(f"\r\n--{boundary}--\r\n".encode())
+
+    body = b"".join(parts)
+    content_type_header = f"multipart/form-data; boundary={boundary}"
+    return body, content_type_header
+
+
+def _upload_and_verify(upload_url: str, file_path: str, fields, allowed_prefixes: tuple[str, ...]) -> str:
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError(file_path)
+
+    body, content_type_header = _build_multipart_body_with_fields(file_path, fields)
+    request = Request(
+        upload_url,
+        data=body,
+        method="POST",
+        headers={
+            "User-Agent": USER_AGENT,
+            "Content-Type": content_type_header,
+        },
+    )
+
+    with urlopen(request, timeout=30) as response:
+        url = response.read().decode("utf-8").strip()
+
+    if not any(url.startswith(prefix) for prefix in allowed_prefixes):
+        raise RuntimeError(f"Unexpected upload response: {url}")
+
+    with urlopen(Request(url, headers={"User-Agent": USER_AGENT}), timeout=30) as response:
+        uploaded = response.read()
+    if not uploaded:
+        raise RuntimeError("Upload returned an empty file")
+
+    return url
+
+
 def paste_file(file_path: str) -> str:
     """
     Upload a local file to catbox.moe and return the short URL to it.
@@ -85,34 +141,22 @@ def paste_file(file_path: str) -> str:
                                  large, blocked file type, or the service
                                  is having issues).
     """
-    if not os.path.isfile(file_path):
-        raise FileNotFoundError(file_path)
-
-    body, content_type_header = _build_multipart_body(file_path)
-
-    request = Request(
+    return _upload_and_verify(
         UPLOAD_URL,
-        data=body,
-        method="POST",
-        headers={
-            "User-Agent": USER_AGENT,
-            "Content-Type": content_type_header,
-        },
+        file_path,
+        {"reqtype": "fileupload"},
+        ("https://files.catbox.moe/",),
     )
 
-    with urlopen(request, timeout=30) as response:
-        url = response.read().decode("utf-8").strip()
 
-    if not url.startswith("https://files.catbox.moe/"):
-        raise RuntimeError(f"Unexpected Catbox response: {url}")
-
-    # Verify that the uploaded URL serves non-empty content.
-    with urlopen(Request(url, headers={"User-Agent": USER_AGENT}), timeout=30) as response:
-        uploaded = response.read()
-    if not uploaded:
-        raise RuntimeError("Catbox returned an empty upload")
-
-    return url
+def paste_file_litterbox(file_path: str, expiry: str = "72h") -> str:
+    """Upload a local file to Litterbox and return the short URL."""
+    return _upload_and_verify(
+        LITTERBOX_UPLOAD_URL,
+        file_path,
+        {"reqtype": "fileupload", "time": expiry},
+        ("https://litter.catbox.moe/",),
+    )
 
 
 # --- Optional Kodi-specific wrapper -----------------------------------
@@ -127,25 +171,38 @@ def paste_and_show_dialog(file_path: str) -> str:
     import xbmc
     import xbmcgui  # noqa: local import, Kodi-only
 
+    provider = "Catbox"
     try:
         url = paste_file(file_path)
-    except Exception:
+    except Exception as first_exc:
         # Catbox can occasionally accept a request but serve an empty object;
-        # retry once before surfacing the error.
+        # retry once before falling back to Litterbox.
         try:
             url = paste_file(file_path)
-        except Exception as exc:
-            xbmc.log(f"[plugin.video.torbox] Export upload failed: {exc}", xbmc.LOGERROR)
-            dialog = xbmcgui.Dialog()
-            dialog.ok(
-                "Export Failed",
-                "Could not upload overrides file.\n\nError:\n{}".format(exc),
-            )
-            raise
+        except Exception as second_exc:
+            try:
+                provider = "Litterbox"
+                url = paste_file_litterbox(file_path)
+            except Exception as third_exc:
+                xbmc.log(
+                    "[plugin.video.torbox] Export upload failed. "
+                    f"Catbox attempt 1: {first_exc} | Catbox attempt 2: {second_exc} | "
+                    f"Litterbox: {third_exc}",
+                    xbmc.LOGERROR,
+                )
+                dialog = xbmcgui.Dialog()
+                dialog.ok(
+                    "Export Failed",
+                    "Could not upload overrides file.\n\n"
+                    "Catbox attempt 1:\n{}\n\nCatbox attempt 2:\n{}\n\n"
+                    "Litterbox fallback:\n{}".format(first_exc, second_exc, third_exc),
+                )
+                return ""
 
     dialog = xbmcgui.Dialog()
     dialog.textviewer(
         "Config uploaded",
+        f"Uploaded via {provider}.\n"
         f"Paste this URL into your GitHub workflow input:\n\n{url}",
     )
     return url
