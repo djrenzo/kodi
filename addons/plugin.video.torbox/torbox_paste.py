@@ -103,6 +103,15 @@ def paste_file(file_path: str) -> str:
     with urlopen(request, timeout=30) as response:
         url = response.read().decode("utf-8").strip()
 
+    if not url.startswith("https://files.catbox.moe/"):
+        raise RuntimeError(f"Unexpected Catbox response: {url}")
+
+    # Verify that the uploaded URL serves non-empty content.
+    with urlopen(Request(url, headers={"User-Agent": USER_AGENT}), timeout=30) as response:
+        uploaded = response.read()
+    if not uploaded:
+        raise RuntimeError("Catbox returned an empty upload")
+
     return url
 
 
@@ -115,9 +124,24 @@ def paste_and_show_dialog(file_path: str) -> str:
     user can select and copy (Kodi has no reliable cross-platform
     clipboard-write API, so a copyable text dialog is the practical option).
     """
+    import xbmc
     import xbmcgui  # noqa: local import, Kodi-only
 
-    url = paste_file(file_path)
+    try:
+        url = paste_file(file_path)
+    except Exception:
+        # Catbox can occasionally accept a request but serve an empty object;
+        # retry once before surfacing the error.
+        try:
+            url = paste_file(file_path)
+        except Exception as exc:
+            xbmc.log(f"[plugin.video.torbox] Export upload failed: {exc}", xbmc.LOGERROR)
+            dialog = xbmcgui.Dialog()
+            dialog.ok(
+                "Export Failed",
+                "Could not upload overrides file.\n\nError:\n{}".format(exc),
+            )
+            raise
 
     dialog = xbmcgui.Dialog()
     dialog.textviewer(

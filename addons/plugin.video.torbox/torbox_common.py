@@ -123,7 +123,23 @@ def save_overrides(data):
 
 
 def export_overrides():
-    return paste_and_show_dialog(OVERRIDES_FILE)
+    # Build a fresh snapshot so exports are never based on a stale/empty file.
+    data = load_overrides()
+
+    if not os.path.exists(PROFILE_PATH):
+        os.makedirs(PROFILE_PATH, exist_ok=True)
+
+    export_file = os.path.join(PROFILE_PATH, 'overrides.export.json')
+    with open(export_file, 'w', encoding='utf-8') as fh:
+        json.dump(data, fh, indent=2)
+        fh.write('\n')
+
+    # If no overrides exist, upload a minimal valid JSON object instead of an empty file.
+    if os.path.getsize(export_file) == 0:
+        with open(export_file, 'w', encoding='utf-8') as fh:
+            fh.write('{}\n')
+
+    return paste_and_show_dialog(export_file)
 
 def import_overrides():
     """
