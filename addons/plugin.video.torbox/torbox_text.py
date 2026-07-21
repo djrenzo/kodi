@@ -13,6 +13,7 @@ CONTEXT_ADD_SUBTITLES = 'Add subtitles'
 CONTEXT_REFRESH_LIBRARY = 'Refresh library'
 CONTEXT_EXPORT_SINGLE_ITEM = 'Export this item to library'
 
+LABEL_MEDIA_UNKNOWN = '[COLOR red]{} |[/COLOR] {}'
 LABEL_MEDIA_FOLDER = '[COLOR springgreen]{} |[/COLOR] {}'
 LABEL_GRAY_ITEM = '[COLOR gray]{}[/COLOR]'
 

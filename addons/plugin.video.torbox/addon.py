@@ -53,6 +53,7 @@ from torbox_text import (
     DIALOG_SET_YEAR,
     LABEL_GRAY_ITEM,
     LABEL_MEDIA_FOLDER,
+    LABEL_MEDIA_UNKNOWN,
     MENU_ACCOUNT_BROWSE,
     MENU_ACCOUNT_EXPORT,
     MENU_ADD_ACCOUNT,
@@ -167,13 +168,14 @@ def list_directory(account_index, remote_path, is_library_root=False):
                 thumb_url = override.get('thumb', '')
                 plot = override.get('plot', '')
                 media_type = override.get('type', 'tvshow')
+                display_label = LABEL_MEDIA_FOLDER.format(media_type, clean_title)
             else:
                 clean_title, year = clean_show_name(name)
                 tvdb_id = ''
                 tmdb_id = ''
                 media_type = 'tvshow'
+                display_label = LABEL_MEDIA_UNKNOWN.format("unknown", clean_title)
 
-            display_label = LABEL_MEDIA_FOLDER.format(media_type, clean_title)
             if year:
                 display_label = '{} ({})'.format(display_label, year)
             if tmdb_id:
