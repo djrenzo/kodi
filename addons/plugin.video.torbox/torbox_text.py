@@ -11,6 +11,7 @@ MENU_SETTINGS = '[COLOR gray]Settings[/COLOR]'
 CONTEXT_SET_OVERRIDE = 'Set show title/override'
 CONTEXT_ADD_SUBTITLES = 'Add subtitles'
 CONTEXT_REFRESH_LIBRARY = 'Refresh library'
+CONTEXT_EXPORT_SINGLE_ITEM = 'Export this item to library'
 
 LABEL_MEDIA_FOLDER = '[COLOR springgreen]{} |[/COLOR] {}'
 LABEL_GRAY_ITEM = '[COLOR gray]{}[/COLOR]'

@@ -111,6 +111,12 @@ def write_movie_nfo(movie_folder, title, year=None, tmdb_id=None):
     write_text_file(os.path.join(movie_folder, 'movie.nfo'), '\n'.join(xml))
 
 
+def get_media_library_root(library_root, media_type):
+    if media_type == 'movie':
+        return os.path.join(library_root, 'movies')
+    return os.path.join(library_root, 'tvshows')
+
+
 def walk_webdav(account, remote_path):
     xml_root = propfind(account['url'] + remote_path, account['username'], account['password'], depth=1)
     if xml_root is None:
@@ -170,7 +176,84 @@ def get_library_folder_for(folder_name):
     else:
         sub_folder = clean_title
 
-    return os.path.join(library_root, sub_folder)
+    media_root = get_media_library_root(library_root, media_type)
+    return os.path.join(media_root, sub_folder)
+
+
+def _export_collection(account, account_index, raw_name, child_path, overrides, movies_root, tvshows_root):
+    override = overrides.get(raw_name, {})
+    media_type = override.get('type', 'tvshow')
+
+    if override:
+        clean_title = override.get('title', raw_name)
+        year = override.get('year')
+        tvdb_id = override.get('tvdb_id')
+        tmdb_id = override.get('tmdb_id')
+    else:
+        clean_title, year = clean_show_name(raw_name)
+        tvdb_id = None
+        tmdb_id = None
+
+    normalized_path = unquote(child_path or '')
+    if not normalized_path:
+        return 0
+
+    if not normalized_path.endswith('/'):
+        normalized_path += '/'
+
+    if media_type == 'movie':
+        folder_name = '{} ({})'.format(clean_title, year) if year else clean_title
+        movie_folder = os.path.join(movies_root, folder_name)
+
+        if not xbmcvfs.exists(movie_folder):
+            xbmcvfs.mkdirs(movie_folder)
+
+        write_movie_nfo(movie_folder, clean_title, year, tmdb_id)
+        video_item = find_main_video(account, normalized_path)
+
+        if video_item is None:
+            log('No video found for movie: {}'.format(raw_name), xbmc.LOGWARNING)
+            return 0
+
+        strm_name = '{}.strm'.format(folder_name)
+        strm_path = os.path.join(movie_folder, strm_name)
+        plugin_url = build_url(
+            {
+                'action': 'play',
+                'account': account_index,
+                'url': video_item.get('full_url', ''),
+                'strm': strm_path,
+            }
+        )
+        write_text_file(strm_path, plugin_url)
+        return 1
+
+    show_folder = os.path.join(tvshows_root, clean_title)
+    if not xbmcvfs.exists(show_folder):
+        xbmcvfs.mkdirs(show_folder)
+
+    write_tvshow_nfo(show_folder, clean_title, tvdb_id, tmdb_id)
+
+    created = 0
+    for episode in walk_webdav(account, normalized_path):
+        season, episode_no = extract_episode_info(episode['name'])
+        if season is None:
+            continue
+
+        strm_name = '{}.S{:02d}E{:02d}.strm'.format(clean_title, season, episode_no)
+        strm_path = os.path.join(show_folder, strm_name)
+        plugin_url = build_url(
+            {
+                'action': 'play',
+                'account': account_index,
+                'url': episode.get('full_url', ''),
+                'strm': strm_path,
+            }
+        )
+        write_text_file(strm_path, plugin_url)
+        created += 1
+
+    return created
 
 
 def export_library(account_index):
@@ -185,6 +268,13 @@ def export_library(account_index):
 
     if not xbmcvfs.exists(library_root):
         xbmcvfs.mkdirs(library_root)
+
+    movies_root = get_media_library_root(library_root, 'movie')
+    tvshows_root = get_media_library_root(library_root, 'tvshow')
+    if not xbmcvfs.exists(movies_root):
+        xbmcvfs.mkdirs(movies_root)
+    if not xbmcvfs.exists(tvshows_root):
+        xbmcvfs.mkdirs(tvshows_root)
 
     overrides = load_overrides()
 
@@ -203,78 +293,59 @@ def export_library(account_index):
         if not raw_name:
             continue
 
-        override = overrides.get(raw_name, {})
-        media_type = override.get('type', 'tvshow')
+        created += _export_collection(
+            account,
+            account_index,
+            raw_name,
+            root_item.get('path', ''),
+            overrides,
+            movies_root,
+            tvshows_root,
+        )
 
-        if override:
-            clean_title = override.get('title', raw_name)
-            year = override.get('year')
-            tvdb_id = override.get('tvdb_id')
-            tmdb_id = override.get('tmdb_id')
-        else:
-            clean_title, year = clean_show_name(raw_name)
-            tvdb_id = None
-            tmdb_id = None
+    xbmcgui.Dialog().ok(APP_NAME, DIALOG_LIBRARY_EXPORT_DONE.format(created))
 
-        child_path = unquote(root_item.get('path', ''))
-        if not child_path:
-            continue
+    if not ADDON.getSettingBool('library_source_created'):
+        ensure_video_source('TorBox Library', library_root)
+        ADDON.setSettingBool('library_source_created', True)
+        xbmcgui.Dialog().ok(
+            APP_NAME,
+            DIALOG_LIBRARY_SOURCE_ADDED,
+        )
+        xbmc.executebuiltin('ActivateWindow(Videos,Files,return)')
+    else:
+        xbmc.executebuiltin('UpdateLibrary(video)')
 
-        if not child_path.endswith('/'):
-            child_path += '/'
 
-        if media_type == 'movie':
-            folder_name = '{} ({})'.format(clean_title, year) if year else clean_title
-            movie_folder = os.path.join(library_root, folder_name)
+def export_library_item(account_index, folder_name, remote_path):
+    account = get_account(account_index)
+    if not account:
+        xbmcgui.Dialog().notification(APP_NAME, NOTIFY_ACCOUNT_NOT_FOUND, xbmcgui.NOTIFICATION_ERROR)
+        return
 
-            if not xbmcvfs.exists(movie_folder):
-                xbmcvfs.mkdirs(movie_folder)
+    library_root = get_library_path()
+    if not library_root:
+        return
 
-            write_movie_nfo(movie_folder, clean_title, year, tmdb_id)
-            video_item = find_main_video(account, child_path)
+    if not xbmcvfs.exists(library_root):
+        xbmcvfs.mkdirs(library_root)
 
-            if video_item is None:
-                log('No video found for movie: {}'.format(raw_name), xbmc.LOGWARNING)
-                continue
+    movies_root = get_media_library_root(library_root, 'movie')
+    tvshows_root = get_media_library_root(library_root, 'tvshow')
+    if not xbmcvfs.exists(movies_root):
+        xbmcvfs.mkdirs(movies_root)
+    if not xbmcvfs.exists(tvshows_root):
+        xbmcvfs.mkdirs(tvshows_root)
 
-            strm_name = '{}.strm'.format(folder_name)
-            strm_path = os.path.join(movie_folder, strm_name)
-            plugin_url = build_url(
-                {
-                    'action': 'play',
-                    'account': account_index,
-                    'url': video_item.get('full_url', ''),
-                    'strm': strm_path,
-                }
-            )
-            write_text_file(strm_path, plugin_url)
-            created += 1
-            continue
-
-        show_folder = os.path.join(library_root, clean_title)
-        if not xbmcvfs.exists(show_folder):
-            xbmcvfs.mkdirs(show_folder)
-
-        write_tvshow_nfo(show_folder, clean_title, tvdb_id, tmdb_id)
-
-        for episode in walk_webdav(account, child_path):
-            season, episode_no = extract_episode_info(episode['name'])
-            if season is None:
-                continue
-
-            strm_name = '{}.S{:02d}E{:02d}.strm'.format(clean_title, season, episode_no)
-            strm_path = os.path.join(show_folder, strm_name)
-            plugin_url = build_url(
-                {
-                    'action': 'play',
-                    'account': account_index,
-                    'url': episode.get('full_url', ''),
-                    'strm': strm_path,
-                }
-            )
-            write_text_file(strm_path, plugin_url)
-            created += 1
-
+    created = _export_collection(
+        account,
+        account_index,
+        folder_name,
+        remote_path,
+        load_overrides(),
+        movies_root,
+        tvshows_root,
+    )
     xbmcgui.Dialog().ok(APP_NAME, DIALOG_LIBRARY_EXPORT_DONE.format(created))
 
     if not ADDON.getSettingBool('library_source_created'):

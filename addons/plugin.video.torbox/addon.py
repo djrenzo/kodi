@@ -30,12 +30,13 @@ from torbox_common import (
     save_overrides,
     export_overrides,
 )
-from torbox_library import export_library
+from torbox_library import export_library, export_library_item
 from torbox_setup import add_account
 from torbox_subtitles import add_subtitles, find_local_subtitles
 from torbox_tmdb import get_tvdb_id_from_tmdb, search_tmdb_movies, search_tmdb_tvshows
 from torbox_text import (
     CONTEXT_ADD_SUBTITLES,
+    CONTEXT_EXPORT_SINGLE_ITEM,
     CONTEXT_REFRESH_LIBRARY,
     CONTEXT_SET_OVERRIDE,
     DIALOG_MANUAL_TMDB,
@@ -209,6 +210,19 @@ def list_directory(account_index, remote_path, is_library_root=False):
                         CONTEXT_ADD_SUBTITLES,
                         'RunPlugin({})'.format(
                             build_url({'action': 'add_subtitles', 'folder_name': name, 'account': account_index})
+                        ),
+                    ),
+                    (
+                        CONTEXT_EXPORT_SINGLE_ITEM,
+                        'RunPlugin({})'.format(
+                            build_url(
+                                {
+                                    'action': 'export_item',
+                                    'folder_name': name,
+                                    'path': child_path,
+                                    'account': account_index,
+                                }
+                            )
                         ),
                     ),
                     (
@@ -592,6 +606,12 @@ def router():
         xbmc.executebuiltin('UpdateLibrary(video)')
     elif action == 'export_library':
         export_library(_get_account_param(params))
+    elif action == 'export_item':
+        export_library_item(
+            _get_account_param(params),
+            params.get('folder_name', ''),
+            params.get('path', ''),
+        )
     else:
         log('Unknown action: {}'.format(action), xbmc.LOGWARNING)
         list_accounts()
