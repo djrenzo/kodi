@@ -110,8 +110,7 @@ def list_accounts():
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'view_overrides'}), li, isFolder=False)
 
     li = xbmcgui.ListItem(label=MENU_SEARCH)
-    li.setProperty('IsPlayable', 'true')
-    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'search'}), li, isFolder=True)
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'search'}), li, isFolder=False)
 
     li = xbmcgui.ListItem(label=MENU_EXPORT_OVERRIDES)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'export_overrides'}), li, isFolder=False)
@@ -455,6 +454,7 @@ def search():
             xbmcgui.Dialog().notification(APP_NAME, 'Search cancelled or failed', xbmcgui.NOTIFICATION_ERROR)
             return
 
+        log('Search redirect query="{}"'.format(search_query))
         xbmc.executebuiltin(
             'Container.Update({},replace)'.format(
                 build_url({'action': 'search_results', 'query': search_query})
