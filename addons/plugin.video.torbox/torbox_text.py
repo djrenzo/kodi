@@ -3,6 +3,7 @@
 MENU_ACCOUNT_BROWSE = '[B]{} - Browse[/B]'
 MENU_ACCOUNT_EXPORT = '{} - Export Library'
 MENU_ADD_ACCOUNT = '[COLOR springgreen]Add account {} via Phone[/COLOR]'
+MENU_SEARCH = '[COLOR springgreen]Search[/COLOR]'
 MENU_MANAGE_OVERRIDES = '[COLOR yellow]Manage show overrides[/COLOR]'
 MENU_EXPORT_OVERRIDES = '[COLOR yellow]Export overrides[/COLOR]'
 MENU_IMPORT_OVERRIDES = '[COLOR yellow]Import overrides[/COLOR]'

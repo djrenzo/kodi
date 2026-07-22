@@ -29,6 +29,7 @@ from torbox_common import (
     log,
     save_overrides,
     export_overrides,
+    search_url,
 )
 from torbox_library import export_library, export_library_item
 from torbox_setup import add_account
@@ -60,6 +61,7 @@ from torbox_text import (
     MENU_IMPORT_OVERRIDES,
     MENU_MANAGE_OVERRIDES,
     MENU_EXPORT_OVERRIDES,
+    MENU_SEARCH,
     MENU_SETTINGS,
     NOTIFY_ACCOUNT_NOT_FOUND,
     NOTIFY_OVERRIDE_REMOVED,
@@ -105,6 +107,9 @@ def list_accounts():
 
     li = xbmcgui.ListItem(label=MENU_MANAGE_OVERRIDES)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'view_overrides'}), li, isFolder=False)
+
+    li = xbmcgui.ListItem(label=MENU_SEARCH)
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'search'}), li, isFolder=False)
 
     li = xbmcgui.ListItem(label=MENU_EXPORT_OVERRIDES)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'export_overrides'}), li, isFolder=False)
@@ -310,6 +315,17 @@ def play_item(account_index, stream_url, strm_path=None):
     li.setSubtitles(local_subs)
     log('Local subtitles: {}'.format(local_subs))
 
+    xbmcplugin.setResolvedUrl(HANDLE, True, li)
+
+def search():
+    resolve_url = search_url()
+
+    if not resolve_url:
+        xbmcgui.Dialog().notification(APP_NAME, "Search cancelled or failed", xbmcgui.NOTIFICATION_ERROR)
+        return
+
+    li = xbmcgui.ListItem(path=resolve_url)
+    
     xbmcplugin.setResolvedUrl(HANDLE, True, li)
 
 
@@ -600,6 +616,8 @@ def router():
         export_overrides()
     elif action == 'import_overrides':
         import_overrides()
+    elif action == 'search':
+        search()
     elif action == 'add_account':
         add_account(_get_account_param(params))
     elif action == 'settings':
