@@ -355,6 +355,14 @@ def list_search_results(search_query):
 
         xbmcplugin.setContent(HANDLE, 'movies')
 
+        new_search_item = xbmcgui.ListItem(label='New Search')
+        xbmcplugin.addDirectoryItem(
+            HANDLE,
+            build_url({'action': 'search'}),
+            new_search_item,
+            isFolder=True,
+        )
+
         for result in results:
             title = result.get('name', 'Unknown Title')
             release_info = result.get('releaseInfo')
@@ -477,8 +485,12 @@ def search():
             xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
             return
 
-        log('Search query="{}"'.format(search_query))
-        list_search_results(search_query)
+        results_url = build_url({'action': 'search_results', 'query': search_query})
+        log('Search redirect query="{}" url={}'.format(search_query, results_url))
+
+        # Complete the original directory request, then replace container with results.
+        xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+        xbmc.executebuiltin('Container.Update({},replace)'.format(results_url))
     except Exception as exc:
         _show_search_error('search', exc)
         try:
