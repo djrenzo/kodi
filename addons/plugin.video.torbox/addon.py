@@ -380,7 +380,6 @@ def list_search_results(search_query):
             isFolder=True,
         )
 
-    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL)
     xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
@@ -413,6 +412,15 @@ def list_search_streams(imdb_id, title='', search_query=''):
             li.setMimeType(mime)
             li.setContentLookup(False)
 
+        li.setInfo(
+            'video',
+            {
+                'title': label,
+                'plot': label2 or label,
+                'mediatype': 'video',
+            },
+        )
+
         xbmcplugin.addDirectoryItem(
             HANDLE,
             build_url({'action': 'play', 'url': stream_url}),
@@ -420,7 +428,6 @@ def list_search_streams(imdb_id, title='', search_query=''):
             isFolder=False,
         )
 
-    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL)
     xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
