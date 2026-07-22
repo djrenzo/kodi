@@ -352,6 +352,7 @@ def search_results(search_query):
                 new_search_item,
                 isFolder=True,
             )
+    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
     
     # try:
     #     results = search_catalog(search_query)
