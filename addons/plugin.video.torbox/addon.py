@@ -112,9 +112,6 @@ def list_accounts():
     li = xbmcgui.ListItem(label=MENU_SEARCH)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'search_menu'}), li, isFolder=True)
 
-    li = xbmcgui.ListItem(label="SEARCH RESULTS TEST")
-    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'search_results', 'query': 'testHoi'}), li, isFolder=True)
-
     li = xbmcgui.ListItem(label=MENU_EXPORT_OVERRIDES)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'export_overrides'}), li, isFolder=False)
 
@@ -301,17 +298,13 @@ def list_directory(account_index, remote_path, is_library_root=False):
 
 
 def play_item(account_index, stream_url, strm_path=None):
-    account = get_account(account_index) if account_index is not None else None
-    if account_index is not None and not account:
+    account = get_account(account_index)
+    if not account:
         xbmcgui.Dialog().notification(APP_NAME, NOTIFY_ACCOUNT_NOT_FOUND, xbmcgui.NOTIFICATION_ERROR)
         return
 
-    resolved_url = (
-        build_authed_url(stream_url, account['username'], account['password'])
-        if account
-        else stream_url
-    )
-    li = xbmcgui.ListItem(path=resolved_url)
+    authed_url = build_authed_url(stream_url, account['username'], account['password'])
+    li = xbmcgui.ListItem(path=authed_url)
 
     ext = os.path.splitext(stream_url)[1].lower()
     mime = VIDEO_MIMETYPES.get(ext)
@@ -324,7 +317,13 @@ def play_item(account_index, stream_url, strm_path=None):
     log('Local subtitles: {}'.format(local_subs))
 
     xbmcplugin.setResolvedUrl(HANDLE, True, li)
-    
+
+
+def play_search(stream_url):
+
+    li = xbmcgui.ListItem(path=stream_url)
+    xbmcplugin.setResolvedUrl(HANDLE, True, li)
+
 
 def _show_search_error(context, exc):
     message = '{}: {}'.format(type(exc).__name__, exc)
@@ -338,7 +337,7 @@ def _show_search_error(context, exc):
 
 def search_results(search_query):
     log('Search results query="{}"'.format(search_query))
-    # xbmcplugin.setContent(HANDLE, 'movies')
+    xbmcplugin.setContent(HANDLE, 'movies')
 
     new_search_item = xbmcgui.ListItem(label=f'Search again. Your search: "{search_query}"')
     xbmcplugin.addDirectoryItem(
@@ -347,7 +346,6 @@ def search_results(search_query):
                 new_search_item,
                 isFolder=True,
             )
-    # xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
     
     try:
         results = search_catalog(search_query)
@@ -459,7 +457,7 @@ def list_search_streams(imdb_id, title='', search_query=''):
 
             xbmcplugin.addDirectoryItem(
                 HANDLE,
-                build_url({'action': 'play', 'url': stream_url}),
+                build_url({'action': 'play_search', 'url': stream_url}),
                 li,
                 isFolder=False,
             )
@@ -472,12 +470,9 @@ def list_search_streams(imdb_id, title='', search_query=''):
         except Exception:
             pass
 
-# ---- menu ----
-
-def search_menu(query=None):
+def search_menu():
     xbmcplugin.setContent(HANDLE, 'movies')
 
-    # "New Search" is always available
     li = xbmcgui.ListItem(label='New Search')
     li.setArt({'icon': 'DefaultAddonsSearch.png'})
     xbmcplugin.addDirectoryItem(
@@ -487,20 +482,7 @@ def search_menu(query=None):
         isFolder=True,
     )
 
-    # optional: show search history entries
-    # for past_query in get_search_history():
-    #     li = xbmcgui.ListItem(label=past_query)
-    #     xbmcplugin.addDirectoryItem(
-    #         HANDLE,
-    #         build_url({'action': 'search_results', 'query': past_query}),
-    #         li,
-    #         isFolder=True,
-    #     )
-
     xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
-
-
-# ---- prompt + redirect ----
 
 def search():
     keyboard = xbmc.Keyboard('', APP_NAME)
@@ -800,9 +782,9 @@ def router():
         path = params.get('path', '/')
         list_directory(account_index, path, is_library_root=(path == '/'))
     elif action == 'play':
-        account_param = params.get('account')
-        account_index = None if account_param in (None, '') else _get_account_param(params)
-        play_item(account_index, params.get('url', ''), params.get('strm'))
+        play_item(_get_account_param(params), params.get('url', ''), params.get('strm'))
+    elif action == 'play_search':
+        play_search(params.get('url', ''))
     elif action == 'set_override':
         set_override(params.get('folder_name', ''), _get_account_param(params))
     elif action == 'add_subtitles':
@@ -814,7 +796,7 @@ def router():
     elif action == 'import_overrides':
         import_overrides()
     elif action == 'search_menu':
-        search_menu(params.get('query'))
+        search_menu()
     elif action == 'search':
         search()
     elif action == 'search_results':
