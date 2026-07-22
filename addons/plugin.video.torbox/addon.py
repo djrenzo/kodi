@@ -430,7 +430,11 @@ def search():
         xbmcgui.Dialog().notification(APP_NAME, 'Search cancelled or failed', xbmcgui.NOTIFICATION_ERROR)
         return
 
-    list_search_results(search_query)
+    xbmc.executebuiltin(
+        'Container.Update({},replace)'.format(
+            build_url({'action': 'search_results', 'query': search_query})
+        )
+    )
 
 
 def choose_tmdb_movie(title, year=None, existing_tmdb_id=''):
@@ -709,7 +713,9 @@ def router():
         path = params.get('path', '/')
         list_directory(account_index, path, is_library_root=(path == '/'))
     elif action == 'play':
-        play_item(_get_account_param(params), params.get('url', ''), params.get('strm'))
+        account_param = params.get('account')
+        account_index = None if account_param in (None, '') else _get_account_param(params)
+        play_item(account_index, params.get('url', ''), params.get('strm'))
     elif action == 'set_override':
         set_override(params.get('folder_name', ''), _get_account_param(params))
     elif action == 'add_subtitles':
@@ -722,6 +728,8 @@ def router():
         import_overrides()
     elif action == 'search':
         search()
+    elif action == 'search_results':
+        list_search_results(params.get('query', ''))
     elif action == 'search_streams':
         list_search_streams(
             params.get('imdb_id', ''),
