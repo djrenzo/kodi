@@ -217,6 +217,8 @@ def search_url():
     selected_stream = fetched_streams[choice]
 
     resolve_url = selected_stream.get("url")
+
+    dialog.ok("URL", "Selected stream URL:\n{}".format(resolve_url))
     return resolve_url
 
 

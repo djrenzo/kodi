@@ -109,6 +109,7 @@ def list_accounts():
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'view_overrides'}), li, isFolder=False)
 
     li = xbmcgui.ListItem(label=MENU_SEARCH)
+    li.setProperty('IsPlayable', 'true')
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'search'}), li, isFolder=False)
 
     li = xbmcgui.ListItem(label=MENU_EXPORT_OVERRIDES)
