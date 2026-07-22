@@ -477,69 +477,72 @@ def list_search_streams(imdb_id, title='', search_query=''):
         except Exception:
             pass
 
+# ---- menu ----
+
 def search_menu(query=None):
-    log('search_menu called with query={!r}'.format(query))
     xbmcplugin.setContent(HANDLE, 'movies')
 
-    if query:
-        li = xbmcgui.ListItem(label='Search Results for "{}"'.format(query))
-        xbmcplugin.addDirectoryItem(
-            HANDLE,
-            build_url({'action': 'search_results', 'query': query}),
-            li,
-            isFolder=True,
-        )
-    else:
-        new_search_item = xbmcgui.ListItem(label='New Search')
-        xbmcplugin.addDirectoryItem(
-            HANDLE,
-            build_url({'action': 'search'}),   # <-- routes to the prompt, not back to itself
-            new_search_item,
-            isFolder=True,
-        )
+    # "New Search" is always available
+    li = xbmcgui.ListItem(label='New Search')
+    li.setArt({'icon': 'DefaultAddonsSearch.png'})
+    xbmcplugin.addDirectoryItem(
+        HANDLE,
+        build_url({'action': 'search'}),
+        li,
+        isFolder=True,
+    )
+
+    # optional: show search history entries
+    # for past_query in get_search_history():
+    #     li = xbmcgui.ListItem(label=past_query)
+    #     xbmcplugin.addDirectoryItem(
+    #         HANDLE,
+    #         build_url({'action': 'search_results', 'query': past_query}),
+    #         li,
+    #         isFolder=True,
+    #     )
 
     xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
+# ---- prompt + redirect ----
+
 def search():
-    try:
-        search_query = _prompt_search_query()
-        if not search_query:
-            xbmcgui.Dialog().notification(APP_NAME, 'Search cancelled', xbmcgui.NOTIFICATION_INFO)
-            xbmcplugin.endOfDirectory(HANDLE, succeeded=True, cacheToDisc=False)
-            return
+    keyboard = xbmc.Keyboard('', APP_NAME)
+    keyboard.doModal()
 
-        results_url = build_url({'action': 'search_menu', 'query': search_query})
-        log('Search redirect query="{}" url={}'.format(search_query, results_url))
+    if not keyboard.isConfirmed():
+        return  # user cancelled — no endOfDirectory, no Container.Update, nothing to do
 
-        xbmcgui.Dialog().notification(APP_NAME, f'Search submitted: "{search_query}"', xbmcgui.NOTIFICATION_INFO)
+    query = keyboard.getText().strip()
+    if not query:
+        return
 
-        xbmcplugin.endOfDirectory(HANDLE, succeeded=True, cacheToDisc=False)
-        xbmc.executebuiltin('Container.Update({})'.format(results_url))
-    except Exception as exc:
-        _show_search_error('search', exc)
-        try:
-            xbmcplugin.endOfDirectory(HANDLE, succeeded=True, cacheToDisc=False)
-        except Exception:
-            pass
+    # save_search_history(query)  # optional
 
-# def search():
-#     try:
-#         search_query = _prompt_search_query()
-#         if not search_query:
-#             xbmcgui.Dialog().notification(APP_NAME, 'Search cancelled', xbmcgui.NOTIFICATION_INFO)
-#             xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
-#             return
+    url = build_url({'action': 'search_results', 'query': query})
+    log('Search redirect query="{}" url={}'.format(query, url))
+    xbmc.executebuiltin('Container.Update({},replace)'.format(url))
 
-#         # Render results directly in this request; Container.Update can be ignored on some Kodi views.
-#         log('Search query="{}"'.format(search_query))
-#         list_search_results(search_query)
-#     except Exception as exc:
-#         _show_search_error('search', exc)
-#         try:
-#             xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
-#         except Exception:
-#             pass
+
+# ---- actual results ----
+
+# def search_results(query):
+#     xbmcplugin.setContent(HANDLE, 'movies')
+
+#     results = do_search(query)  # your scraping/API logic
+#     for item in results:
+#         li = xbmcgui.ListItem(label=item['title'])
+#         li.setProperty('IsPlayable', 'true')
+#         li.setInfo('video', {'title': item['title']})
+#         xbmcplugin.addDirectoryItem(
+#             HANDLE,
+#             build_url({'action': 'play', 'id': item['id']}),
+#             li,
+#             isFolder=False,
+#         )
+
+#     xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
 def choose_tmdb_movie(title, year=None, existing_tmdb_id=''):
