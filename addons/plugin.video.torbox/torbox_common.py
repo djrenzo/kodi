@@ -5,7 +5,7 @@ import re
 import sys
 import time
 from typing import List, Optional, TypedDict
-from urllib.parse import urlencode
+from urllib.parse import quote_plus, urlencode
 
 import xbmc
 import xbmcaddon
@@ -102,124 +102,53 @@ def get_params():
                 params[key] = unquote_plus(value)
     return params
 
-def search_url():
-    dialog = xbmcgui.Dialog()
-    search_query = dialog.input('Search for:')
+def search_catalog(search_query):
+    search_query = (search_query or '').strip()
     if not search_query:
-        return
-    log('Search query: {}'.format(search_query))
-    
-    url = f"https://v3-cinemeta.strem.io/catalog/movie/top/search={search_query}.json"
- 
+        return []
+
+    encoded_query = quote_plus(search_query)
+    url = 'https://v3-cinemeta.strem.io/catalog/movie/top/search={}.json'.format(encoded_query)
+
     try:
         request = Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urlopen(request, timeout=15) as response:
             raw = response.read().decode('utf-8')
     except (HTTPError, URLError) as exc:
         log('search: failed to fetch {}: {}'.format(url, exc), xbmc.LOGWARNING)
-        dialog.notification(
-            ADDON.getAddonInfo('name'),
-            'Failed to fetch search results',
-            xbmcgui.NOTIFICATION_ERROR,
-        )
-        return False
- 
+        return []
+
     try:
-        fetched_data = json.loads(raw).get("metas", [])
+        return json.loads(raw).get('metas', [])
     except ValueError as exc:
         log('search: invalid JSON from {}: {}'.format(url, exc), xbmc.LOGWARNING)
-        dialog.notification(
-            ADDON.getAddonInfo('name'),
-            'Search results are not valid JSON',
-            xbmcgui.NOTIFICATION_ERROR,
-        )
-        return False
+        return []
 
-    if not fetched_data:
-        dialog.notification(
-            ADDON.getAddonInfo('name'),
-            'No results found for "{}"'.format(search_query),
-            xbmcgui.NOTIFICATION_INFO,
-        )
-        return False
 
-    options = []
-    for result in fetched_data:
-        year_text = ' ({})'.format(result['releaseInfo']) if result.get('releaseInfo') else ''
-        item = xbmcgui.ListItem(
-            label='{}{}'.format(result['name'], year_text),
-            label2='IMDB {}'.format(result['imdb_id']),
-        )
-        poster_url = result.get('poster')
-        if poster_url:
-            item.setArt({'icon': poster_url, 'thumb': poster_url})
-        options.append(item)
+def search_streams(imdb_id):
+    imdb_id = (imdb_id or '').strip()
+    if not imdb_id:
+        return []
 
-    choice = dialog.select("Choose movie", options, useDetails=True)
-    if choice < 0:
-        return None
+    url_stream = (
+        'https://aiostreams.elfhosted.com/stremio/75fc1abd-abf5-44e7-9d21-92ced9d69aa1/'
+        'eyJpIjoiWlRlOTYrZW1BRWRhYktKM3JsM1JZUT09IiwiZSI6IlVmdkVSU2pES0dZR2tDbExqWVBVZlpoQm5memJVSGZtVFhBL2JzUEh2VkU9IiwidCI6ImEifQ/'
+        'stream/movie/{}.json'
+    ).format(imdb_id)
 
-    selected = fetched_data[choice]
-    selected_id = selected['imdb_id']
-    # return {
-    #     'id': selected['imdb_id'],
-    #     'year': selected.get('releaseInfo'),
-    #     'poster_url': selected.get('poster', ''),
-    #     'plot': selected.get('plot', ''),
-    # }
-
-    url_stream = f"https://aiostreams.elfhosted.com/stremio/75fc1abd-abf5-44e7-9d21-92ced9d69aa1/eyJpIjoiWlRlOTYrZW1BRWRhYktKM3JsM1JZUT09IiwiZSI6IlVmdkVSU2pES0dZR2tDbExqWVBVZlpoQm5memJVSGZtVFhBL2JzUEh2VkU9IiwidCI6ImEifQ/stream/movie/{selected_id}.json"
- 
     try:
         request = Request(url_stream, headers={'User-Agent': 'Mozilla/5.0'})
         with urlopen(request, timeout=15) as response:
             raw_stream = response.read().decode('utf-8')
     except (HTTPError, URLError) as exc:
         log('search: failed to fetch {}: {}'.format(url_stream, exc), xbmc.LOGWARNING)
-        dialog.notification(
-            ADDON.getAddonInfo('name'),
-            'Failed to fetch streams for selected movie',
-            xbmcgui.NOTIFICATION_ERROR,
-        )
-        return False
- 
+        return []
+
     try:
-        fetched_streams = json.loads(raw_stream).get("streams", [])
+        return json.loads(raw_stream).get('streams', [])
     except ValueError as exc:
         log('search: invalid JSON from {}: {}'.format(url_stream, exc), xbmc.LOGWARNING)
-        dialog.notification(
-            ADDON.getAddonInfo('name'),
-            'Search results are not valid JSON',
-            xbmcgui.NOTIFICATION_ERROR,
-        )
-        return False
-
-    if not fetched_streams:
-        dialog.notification(
-            ADDON.getAddonInfo('name'),
-            'No streams found for "{}"'.format(search_query),
-            xbmcgui.NOTIFICATION_INFO,
-        )
-        return False
-    
-    options = []
-    for result in fetched_streams:
-        item = xbmcgui.ListItem(
-            label=result.get("name", "Unknown Title"),
-            label2=result.get("description", "Unknown Description"),
-        )
-        options.append(item)
-
-    choice = dialog.select("Choose stream", options, useDetails=True)
-    if choice < 0:
-        return None
-
-    selected_stream = fetched_streams[choice]
-
-    resolve_url = selected_stream.get("url")
-
-    dialog.ok("URL", "Selected stream URL:\n{}".format(resolve_url))
-    return resolve_url
+        return []
 
 
 

@@ -29,7 +29,8 @@ from torbox_common import (
     log,
     save_overrides,
     export_overrides,
-    search_url,
+    search_catalog,
+    search_streams,
 )
 from torbox_library import export_library, export_library_item
 from torbox_setup import add_account
@@ -110,7 +111,7 @@ def list_accounts():
 
     li = xbmcgui.ListItem(label=MENU_SEARCH)
     li.setProperty('IsPlayable', 'true')
-    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'search'}), li, isFolder=False)
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'search'}), li, isFolder=True)
 
     li = xbmcgui.ListItem(label=MENU_EXPORT_OVERRIDES)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'export_overrides'}), li, isFolder=False)
@@ -298,13 +299,17 @@ def list_directory(account_index, remote_path, is_library_root=False):
 
 
 def play_item(account_index, stream_url, strm_path=None):
-    account = get_account(account_index)
-    if not account:
+    account = get_account(account_index) if account_index is not None else None
+    if account_index is not None and not account:
         xbmcgui.Dialog().notification(APP_NAME, NOTIFY_ACCOUNT_NOT_FOUND, xbmcgui.NOTIFICATION_ERROR)
         return
 
-    authed_url = build_authed_url(stream_url, account['username'], account['password'])
-    li = xbmcgui.ListItem(path=authed_url)
+    resolved_url = (
+        build_authed_url(stream_url, account['username'], account['password'])
+        if account
+        else stream_url
+    )
+    li = xbmcgui.ListItem(path=resolved_url)
 
     ext = os.path.splitext(stream_url)[1].lower()
     mime = VIDEO_MIMETYPES.get(ext)
@@ -318,16 +323,114 @@ def play_item(account_index, stream_url, strm_path=None):
 
     xbmcplugin.setResolvedUrl(HANDLE, True, li)
 
-def search():
-    resolve_url = search_url()
+def _prompt_search_query():
+    dialog = xbmcgui.Dialog()
+    search_query = dialog.input('Search for:')
+    if not search_query:
+        return None
+    return search_query.strip()
 
-    if not resolve_url:
-        xbmcgui.Dialog().notification(APP_NAME, "Search cancelled or failed", xbmcgui.NOTIFICATION_ERROR)
+
+def list_search_results(search_query):
+    results = search_catalog(search_query)
+
+    if not results:
+        xbmcgui.Dialog().notification(
+            APP_NAME,
+            'No results found for "{}"'.format(search_query),
+            xbmcgui.NOTIFICATION_INFO,
+        )
         return
 
-    li = xbmcgui.ListItem(path=resolve_url)
-    
-    xbmcplugin.setResolvedUrl(HANDLE, True, li)
+    xbmcplugin.setContent(HANDLE, 'movies')
+
+    for result in results:
+        title = result.get('name', 'Unknown Title')
+        release_info = result.get('releaseInfo')
+        year_text = ' ({})'.format(release_info) if release_info else ''
+        imdb_id = result.get('imdb_id', '')
+
+        li = xbmcgui.ListItem(
+            label='{}{}'.format(title, year_text),
+            label2='IMDB {}'.format(imdb_id) if imdb_id else '',
+        )
+        poster_url = result.get('poster')
+        if poster_url:
+            li.setArt({'icon': poster_url, 'thumb': poster_url, 'poster': poster_url})
+        li.setInfo(
+            'video',
+            {
+                'title': title,
+                'plot': result.get('plot', title),
+                'mediatype': 'movie',
+            },
+        )
+
+        xbmcplugin.addDirectoryItem(
+            HANDLE,
+            build_url(
+                {
+                    'action': 'search_streams',
+                    'imdb_id': imdb_id,
+                    'title': title,
+                    'query': search_query,
+                }
+            ),
+            li,
+            isFolder=True,
+        )
+
+    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL)
+    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+
+
+def list_search_streams(imdb_id, title='', search_query=''):
+    streams = search_streams(imdb_id)
+
+    if not streams:
+        xbmcgui.Dialog().notification(
+            APP_NAME,
+            'No streams found for "{}"'.format(title or search_query or imdb_id),
+            xbmcgui.NOTIFICATION_INFO,
+        )
+        return
+
+    xbmcplugin.setContent(HANDLE, 'videos')
+
+    for result in streams:
+        stream_url = result.get('url', '')
+        if not stream_url:
+            continue
+
+        label = result.get('name', 'Unknown Stream')
+        label2 = result.get('description', '')
+        li = xbmcgui.ListItem(label=label, label2=label2)
+        li.setProperty('IsPlayable', 'true')
+
+        ext = os.path.splitext(stream_url)[1].lower()
+        mime = VIDEO_MIMETYPES.get(ext)
+        if mime:
+            li.setMimeType(mime)
+            li.setContentLookup(False)
+
+        xbmcplugin.addDirectoryItem(
+            HANDLE,
+            build_url({'action': 'play', 'url': stream_url}),
+            li,
+            isFolder=False,
+        )
+
+    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL)
+    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+
+
+def search():
+    search_query = _prompt_search_query()
+    if not search_query:
+        xbmcgui.Dialog().notification(APP_NAME, 'Search cancelled or failed', xbmcgui.NOTIFICATION_ERROR)
+        return
+
+    list_search_results(search_query)
 
 
 def choose_tmdb_movie(title, year=None, existing_tmdb_id=''):
@@ -619,6 +722,12 @@ def router():
         import_overrides()
     elif action == 'search':
         search()
+    elif action == 'search_streams':
+        list_search_streams(
+            params.get('imdb_id', ''),
+            params.get('title', ''),
+            params.get('query', ''),
+        )
     elif action == 'add_account':
         add_account(_get_account_param(params))
     elif action == 'settings':
