@@ -512,16 +512,20 @@ def search():
     keyboard.doModal()
 
     if not keyboard.isConfirmed():
-        return  # user cancelled — no endOfDirectory, no Container.Update, nothing to do
+        xbmcplugin.endOfDirectory(HANDLE, succeeded=True, cacheToDisc=False)
+        return
 
     query = keyboard.getText().strip()
     if not query:
+        xbmcplugin.endOfDirectory(HANDLE, succeeded=True, cacheToDisc=False)
         return
 
     # save_search_history(query)  # optional
 
     url = build_url({'action': 'search_results', 'query': query})
     log('Search redirect query="{}" url={}'.format(query, url))
+
+    xbmcplugin.endOfDirectory(HANDLE, succeeded=True, cacheToDisc=False)
     xbmc.executebuiltin('Container.Update({},replace)'.format(url))
 
 
