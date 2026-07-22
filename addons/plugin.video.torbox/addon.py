@@ -402,12 +402,13 @@ def list_search_streams(imdb_id, title='', search_query=''):
             continue
 
         fname = None
-        description = result.get('description')
+        descr_original = ''
+        description = result.get('description') or ''
         if description:
             descr_split = description.split("FILENAME=")
             if len(descr_split) >= 2:
                 descr_original = descr_split[0].strip()
-                fname = descr_split[1]
+                fname = descr_split[1].strip()
             else:
                 descr_original = description
 
