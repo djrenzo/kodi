@@ -401,51 +401,73 @@ def list_search_results(search_query):
 
 
 def list_search_streams(imdb_id, title='', search_query=''):
-    streams = search_streams(imdb_id)
+    try:
+        streams = search_streams(imdb_id)
 
-    if not streams:
-        xbmcgui.Dialog().notification(
-            APP_NAME,
-            'No streams found for "{}"'.format(title or search_query or imdb_id),
-            xbmcgui.NOTIFICATION_INFO,
-        )
-        return
+        if not streams:
+            xbmcgui.Dialog().notification(
+                APP_NAME,
+                'No streams found for "{}"'.format(title or search_query or imdb_id),
+                xbmcgui.NOTIFICATION_INFO,
+            )
+            xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+            return
 
-    xbmcplugin.setContent(HANDLE, 'videos')
+        xbmcplugin.setContent(HANDLE, 'videos')
 
-    for result in streams:
-        stream_url = result.get('url', '')
-        if not stream_url:
-            continue
+        for result in streams:
+            stream_url = result.get('url', '')
+            if not stream_url:
+                continue
 
-        label = result.get('name', 'Unknown Stream')
-        label2 = result.get('description', '')
-        li = xbmcgui.ListItem(label=label, label2=label2)
-        li.setProperty('IsPlayable', 'true')
+            raw_name = result.get('name')
+            name = raw_name.strip() if isinstance(raw_name, str) else ''
+            raw_description = result.get('description')
+            description = raw_description.strip() if isinstance(raw_description, str) else ''
 
-        ext = os.path.splitext(stream_url)[1].lower()
-        mime = VIDEO_MIMETYPES.get(ext)
-        if mime:
-            li.setMimeType(mime)
-            li.setContentLookup(False)
+            label2 = description
+            file_name = ''
+            if 'FILENAME=' in description:
+                label2, file_name = description.split('FILENAME=', 1)
+                label2 = label2.strip()
+                file_name = file_name.strip()
 
-        li.setInfo(
-            'video',
-            {
-                'title': label,
-                'plot': label2 or label,
-                'mediatype': 'video',
-            },
-        )
+            label = name or 'Unknown Stream'
+            if file_name:
+                label = '{} {}'.format(label, file_name)
 
-        xbmcplugin.addDirectoryItem(
-            HANDLE,
-            build_url({'action': 'play', 'url': stream_url}),
-            li,
-            isFolder=False,
-        )
+            li = xbmcgui.ListItem(label=label, label2=label2)
+            li.setProperty('IsPlayable', 'true')
 
-    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+            ext = os.path.splitext(stream_url)[1].lower()
+            mime = VIDEO_MIMETYPES.get(ext)
+            if mime:
+                li.setMimeType(mime)
+                li.setContentLookup(False)
+
+            li.setInfo(
+                'video',
+                {
+                    'title': label,
+                    'plot': label2 or label,
+                    'mediatype': 'video',
+                },
+            )
+
+            xbmcplugin.addDirectoryItem(
+                HANDLE,
+                build_url({'action': 'play', 'url': stream_url}),
+                li,
+                isFolder=False,
+            )
+
+        xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+    except Exception as exc:
+        _show_search_error('search_streams', exc)
+        try:
+            xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+        except Exception:
+            pass
 
 def search():
     try:
