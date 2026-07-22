@@ -110,7 +110,7 @@ def list_accounts():
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'view_overrides'}), li, isFolder=False)
 
     li = xbmcgui.ListItem(label=MENU_SEARCH)
-    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'search'}), li, isFolder=True)
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'search_menu'}), li, isFolder=True)
 
     li = xbmcgui.ListItem(label=MENU_EXPORT_OVERRIDES)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'export_overrides'}), li, isFolder=False)
@@ -477,15 +477,38 @@ def list_search_streams(imdb_id, title='', search_query=''):
         except Exception:
             pass
 
+def search_menu(query=None):
+    xbmcplugin.setContent(HANDLE, 'movies')
+
+    if query:
+        li = xbmcgui.ListItem(label='Search Results for "{}"'.format(query))
+        xbmcplugin.addDirectoryItem(
+            HANDLE,
+            build_url({'action': 'search_results', 'query': query}),
+            li,
+            isFolder=True,
+        )
+    else:
+        new_search_item = xbmcgui.ListItem(label='New Search')
+        xbmcplugin.addDirectoryItem(
+            HANDLE,
+            build_url({'action': 'search'}),   # <-- routes to the prompt, not back to itself
+            new_search_item,
+            isFolder=True,
+        )
+
+    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+
+
 def search():
     try:
         search_query = _prompt_search_query()
         if not search_query:
             xbmcgui.Dialog().notification(APP_NAME, 'Search cancelled', xbmcgui.NOTIFICATION_INFO)
-            xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+            xbmcplugin.endOfDirectory(HANDLE, succeeded=False, cacheToDisc=False)
             return
 
-        results_url = build_url({'action': 'search_results', 'query': search_query})
+        results_url = build_url({'action': 'search_menu', 'query': search_query})
         log('Search redirect query="{}" url={}'.format(search_query, results_url))
 
         xbmcplugin.endOfDirectory(HANDLE, succeeded=False, cacheToDisc=False)
@@ -493,9 +516,27 @@ def search():
     except Exception as exc:
         _show_search_error('search', exc)
         try:
-            xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+            xbmcplugin.endOfDirectory(HANDLE, succeeded=False, cacheToDisc=False)
         except Exception:
             pass
+
+# def search():
+#     try:
+#         search_query = _prompt_search_query()
+#         if not search_query:
+#             xbmcgui.Dialog().notification(APP_NAME, 'Search cancelled', xbmcgui.NOTIFICATION_INFO)
+#             xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+#             return
+
+#         # Render results directly in this request; Container.Update can be ignored on some Kodi views.
+#         log('Search query="{}"'.format(search_query))
+#         list_search_results(search_query)
+#     except Exception as exc:
+#         _show_search_error('search', exc)
+#         try:
+#             xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+#         except Exception:
+#             pass
 
 
 def choose_tmdb_movie(title, year=None, existing_tmdb_id=''):
@@ -787,6 +828,8 @@ def router():
         export_overrides()
     elif action == 'import_overrides':
         import_overrides()
+    elif action == 'search_menu':
+        search_menu(params.get('query'))
     elif action == 'search':
         search()
     elif action == 'search_results':
