@@ -110,7 +110,7 @@ def list_accounts():
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'view_overrides'}), li, isFolder=False)
 
     li = xbmcgui.ListItem(label=MENU_SEARCH)
-    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'search'}), li, isFolder=False)
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'search'}), li, isFolder=True)
 
     li = xbmcgui.ListItem(label=MENU_EXPORT_OVERRIDES)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'export_overrides'}), li, isFolder=False)
@@ -451,17 +451,18 @@ def search():
     try:
         search_query = _prompt_search_query()
         if not search_query:
-            xbmcgui.Dialog().notification(APP_NAME, 'Search cancelled or failed', xbmcgui.NOTIFICATION_ERROR)
+            xbmcgui.Dialog().notification(APP_NAME, 'Search cancelled', xbmcgui.NOTIFICATION_INFO)
+            xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
             return
 
-        log('Search redirect query="{}"'.format(search_query))
-        xbmc.executebuiltin(
-            'Container.Update({},replace)'.format(
-                build_url({'action': 'search_results', 'query': search_query})
-            )
-        )
+        log('Search query="{}"'.format(search_query))
+        list_search_results(search_query)
     except Exception as exc:
         _show_search_error('search', exc)
+        try:
+            xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+        except Exception:
+            pass
 
 
 def choose_tmdb_movie(title, year=None, existing_tmdb_id=''):
