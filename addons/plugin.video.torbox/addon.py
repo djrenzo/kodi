@@ -533,12 +533,12 @@ def search():
         xbmcplugin.endOfDirectory(HANDLE, succeeded=True, cacheToDisc=False)
         return
 
-    # save_search_history(query)  # optional
-
     url = build_url({'action': 'search_results', 'query': query})
     log('Search redirect query="{}" url={}'.format(query, url))
 
     xbmcplugin.endOfDirectory(HANDLE, succeeded=True, cacheToDisc=False)
+
+    xbmc.sleep(500)  # let the GUI finish deiniting the current window before redirecting
     xbmc.executebuiltin('Container.Update({},replace)'.format(url))
 
 
