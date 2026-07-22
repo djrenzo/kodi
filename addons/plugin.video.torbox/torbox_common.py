@@ -125,7 +125,7 @@ def search_url():
         return False
  
     try:
-        fetched_data = json.loads(raw).get("meta", [])
+        fetched_data = json.loads(raw).get("metas", [])
     except ValueError as exc:
         log('search: invalid JSON from {}: {}'.format(url, exc), xbmc.LOGWARNING)
         dialog.notification(
