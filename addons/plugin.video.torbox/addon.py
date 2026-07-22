@@ -488,9 +488,8 @@ def search():
         results_url = build_url({'action': 'search_results', 'query': search_query})
         log('Search redirect query="{}" url={}'.format(search_query, results_url))
 
-        # Replace the container first, then close the current directory callback.
-        xbmc.executebuiltin('Container.Update({},replace)'.format(results_url))
-        xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+        # xbmcplugin.endOfDirectory(HANDLE, succeeded=False, cacheToDisc=False)
+        xbmc.executebuiltin('Container.Update({})'.format(results_url))
     except Exception as exc:
         _show_search_error('search', exc)
         try:
