@@ -112,6 +112,9 @@ def list_accounts():
     li = xbmcgui.ListItem(label=MENU_SEARCH)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'search_menu'}), li, isFolder=True)
 
+    li = xbmcgui.ListItem(label="SEARCH RESULTS TEST")
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'search_results', 'query': 'testHoi'}), li, isFolder=True)
+
     li = xbmcgui.ListItem(label=MENU_EXPORT_OVERRIDES)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'export_overrides'}), li, isFolder=False)
 
@@ -340,72 +343,81 @@ def _show_search_error(context, exc):
     )
 
 
-def list_search_results(search_query):
-    try:
-        results = search_catalog(search_query)
-
-        if not results:
-            xbmcgui.Dialog().notification(
-                APP_NAME,
-                'No results found for "{}"'.format(search_query),
-                xbmcgui.NOTIFICATION_INFO,
-            )
-            xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
-            return
-
-        xbmcplugin.setContent(HANDLE, 'movies')
-
-        new_search_item = xbmcgui.ListItem(label='New Search')
-        xbmcplugin.addDirectoryItem(
-            HANDLE,
-            build_url({'action': 'search'}),
-            new_search_item,
-            isFolder=True,
-        )
-
-        for result in results:
-            title = result.get('name', 'Unknown Title')
-            release_info = result.get('releaseInfo')
-            year_text = ' ({})'.format(release_info) if release_info else ''
-            imdb_id = result.get('imdb_id', '')
-
-            li = xbmcgui.ListItem(
-                label='{}{}'.format(title, year_text),
-                label2='IMDB {}'.format(imdb_id) if imdb_id else '',
-            )
-            poster_url = result.get('poster')
-            if poster_url:
-                li.setArt({'icon': poster_url, 'thumb': poster_url, 'poster': poster_url})
-            li.setInfo(
-                'video',
-                {
-                    'title': title,
-                    'plot': result.get('plot', title),
-                    'mediatype': 'movie',
-                },
-            )
-
-            xbmcplugin.addDirectoryItem(
+def search_results(search_query):
+    log('Search results query="{}"'.format(search_query))
+    new_search_item = xbmcgui.ListItem(label=f'Successfull search for "{search_query}"')
+    xbmcplugin.addDirectoryItem(
                 HANDLE,
-                build_url(
-                    {
-                        'action': 'search_streams',
-                        'imdb_id': imdb_id,
-                        'title': title,
-                        'query': search_query,
-                    }
-                ),
-                li,
+                build_url({'action': 'search'}),
+                new_search_item,
                 isFolder=True,
             )
+    
+    # try:
+    #     results = search_catalog(search_query)
 
-        xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
-    except Exception as exc:
-        _show_search_error('search_results', exc)
-        try:
-            xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
-        except Exception:
-            pass
+    #     if not results:
+    #         xbmcgui.Dialog().notification(
+    #             APP_NAME,
+    #             'No results found for "{}"'.format(search_query),
+    #             xbmcgui.NOTIFICATION_INFO,
+    #         )
+    #         xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+    #         return
+
+    #     xbmcplugin.setContent(HANDLE, 'movies')
+
+    #     new_search_item = xbmcgui.ListItem(label='New Search')
+    #     xbmcplugin.addDirectoryItem(
+    #         HANDLE,
+    #         build_url({'action': 'search'}),
+    #         new_search_item,
+    #         isFolder=True,
+    #     )
+
+    #     for result in results:
+    #         title = result.get('name', 'Unknown Title')
+    #         release_info = result.get('releaseInfo')
+    #         year_text = ' ({})'.format(release_info) if release_info else ''
+    #         imdb_id = result.get('imdb_id', '')
+
+    #         li = xbmcgui.ListItem(
+    #             label='{}{}'.format(title, year_text),
+    #             label2='IMDB {}'.format(imdb_id) if imdb_id else '',
+    #         )
+    #         poster_url = result.get('poster')
+    #         if poster_url:
+    #             li.setArt({'icon': poster_url, 'thumb': poster_url, 'poster': poster_url})
+    #         li.setInfo(
+    #             'video',
+    #             {
+    #                 'title': title,
+    #                 'plot': result.get('plot', title),
+    #                 'mediatype': 'movie',
+    #             },
+    #         )
+
+    #         xbmcplugin.addDirectoryItem(
+    #             HANDLE,
+    #             build_url(
+    #                 {
+    #                     'action': 'search_streams',
+    #                     'imdb_id': imdb_id,
+    #                     'title': title,
+    #                     'query': search_query,
+    #                 }
+    #             ),
+    #             li,
+    #             isFolder=True,
+    #         )
+
+    #     xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+    # except Exception as exc:
+    #     _show_search_error('search_results', exc)
+    #     try:
+    #         xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+    #     except Exception:
+    #         pass
 
 
 def list_search_streams(imdb_id, title='', search_query=''):
@@ -843,7 +855,7 @@ def router():
     elif action == 'search':
         search()
     elif action == 'search_results':
-        list_search_results(params.get('query', ''))
+        search_results(params.get('query', ''))
     elif action == 'search_streams':
         list_search_streams(
             params.get('imdb_id', ''),

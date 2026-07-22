@@ -82,7 +82,7 @@ class WebDavItem(TypedDict):
     size: int
 
 
-def log(msg, level=xbmc.LOGDEBUG):
+def log(msg, level=xbmc.LOGINFO):
     xbmc.log('[plugin.video.torbox] {}'.format(msg), level)
 
 
@@ -149,10 +149,6 @@ def search_streams(imdb_id):
     except ValueError as exc:
         log('search: invalid JSON from {}: {}'.format(url_stream, exc), xbmc.LOGWARNING)
         return []
-
-
-
-
 
 
 def load_overrides():
