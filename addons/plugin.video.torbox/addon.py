@@ -401,8 +401,27 @@ def list_search_streams(imdb_id, title='', search_query=''):
         if not stream_url:
             continue
 
-        label = result.get('name', 'Unknown Stream')
-        label2 = result.get('description', '')
+        fname = None
+        description = result.get('description')
+        if description:
+            descr_split = description.split("FILENAME=")
+            if len(descr_split) >= 2:
+                descr_original = descr_split[0].strip()
+                fname = descr_split[1]
+            else:
+                descr_original = description
+
+        name = result.get('name')
+        if name:
+            if fname:
+                final_name = f"{name} {fname}"
+            else:
+                final_name = name
+        else:
+            final_name = "Unknown Stream"
+            
+        label = final_name
+        label2 = descr_original
         li = xbmcgui.ListItem(label=label, label2=label2)
         li.setProperty('IsPlayable', 'true')
 
