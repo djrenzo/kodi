@@ -478,6 +478,7 @@ def list_search_streams(imdb_id, title='', search_query=''):
             pass
 
 def search_menu(query=None):
+    log('search_menu called with query={!r}'.format(query))
     xbmcplugin.setContent(HANDLE, 'movies')
 
     if query:
@@ -505,18 +506,20 @@ def search():
         search_query = _prompt_search_query()
         if not search_query:
             xbmcgui.Dialog().notification(APP_NAME, 'Search cancelled', xbmcgui.NOTIFICATION_INFO)
-            xbmcplugin.endOfDirectory(HANDLE, succeeded=False, cacheToDisc=False)
+            xbmcplugin.endOfDirectory(HANDLE, succeeded=True, cacheToDisc=False)
             return
 
         results_url = build_url({'action': 'search_menu', 'query': search_query})
         log('Search redirect query="{}" url={}'.format(search_query, results_url))
 
-        xbmcplugin.endOfDirectory(HANDLE, succeeded=False, cacheToDisc=False)
+        xbmcgui.Dialog().notification(APP_NAME, f'Search submitted: "{search_query}"', xbmcgui.NOTIFICATION_INFO)
+
+        xbmcplugin.endOfDirectory(HANDLE, succeeded=True, cacheToDisc=False)
         xbmc.executebuiltin('Container.Update({})'.format(results_url))
     except Exception as exc:
         _show_search_error('search', exc)
         try:
-            xbmcplugin.endOfDirectory(HANDLE, succeeded=False, cacheToDisc=False)
+            xbmcplugin.endOfDirectory(HANDLE, succeeded=True, cacheToDisc=False)
         except Exception:
             pass
 
