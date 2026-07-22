@@ -331,131 +331,160 @@ def _prompt_search_query():
     return search_query.strip()
 
 
+def _show_search_error(context, exc):
+    message = '{}: {}'.format(type(exc).__name__, exc)
+    log('Search error in {}: {}'.format(context, message), xbmc.LOGERROR)
+    xbmcgui.Dialog().notification(
+        APP_NAME,
+        'Search error in {}. Check Kodi log.'.format(context),
+        xbmcgui.NOTIFICATION_ERROR,
+    )
+
+
 def list_search_results(search_query):
-    results = search_catalog(search_query)
+    try:
+        results = search_catalog(search_query)
 
-    if not results:
-        xbmcgui.Dialog().notification(
-            APP_NAME,
-            'No results found for "{}"'.format(search_query),
-            xbmcgui.NOTIFICATION_INFO,
-        )
-        return
+        if not results:
+            xbmcgui.Dialog().notification(
+                APP_NAME,
+                'No results found for "{}"'.format(search_query),
+                xbmcgui.NOTIFICATION_INFO,
+            )
+            xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+            return
 
-    xbmcplugin.setContent(HANDLE, 'movies')
+        xbmcplugin.setContent(HANDLE, 'movies')
 
-    for result in results:
-        title = result.get('name', 'Unknown Title')
-        release_info = result.get('releaseInfo')
-        year_text = ' ({})'.format(release_info) if release_info else ''
-        imdb_id = result.get('imdb_id', '')
+        for result in results:
+            title = result.get('name', 'Unknown Title')
+            release_info = result.get('releaseInfo')
+            year_text = ' ({})'.format(release_info) if release_info else ''
+            imdb_id = result.get('imdb_id', '')
 
-        li = xbmcgui.ListItem(
-            label='{}{}'.format(title, year_text),
-            label2='IMDB {}'.format(imdb_id) if imdb_id else '',
-        )
-        poster_url = result.get('poster')
-        if poster_url:
-            li.setArt({'icon': poster_url, 'thumb': poster_url, 'poster': poster_url})
-        li.setInfo(
-            'video',
-            {
-                'title': title,
-                'plot': result.get('plot', title),
-                'mediatype': 'movie',
-            },
-        )
-
-        xbmcplugin.addDirectoryItem(
-            HANDLE,
-            build_url(
+            li = xbmcgui.ListItem(
+                label='{}{}'.format(title, year_text),
+                label2='IMDB {}'.format(imdb_id) if imdb_id else '',
+            )
+            poster_url = result.get('poster')
+            if poster_url:
+                li.setArt({'icon': poster_url, 'thumb': poster_url, 'poster': poster_url})
+            li.setInfo(
+                'video',
                 {
-                    'action': 'search_streams',
-                    'imdb_id': imdb_id,
                     'title': title,
-                    'query': search_query,
-                }
-            ),
-            li,
-            isFolder=True,
-        )
+                    'plot': result.get('plot', title),
+                    'mediatype': 'movie',
+                },
+            )
 
-    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+            xbmcplugin.addDirectoryItem(
+                HANDLE,
+                build_url(
+                    {
+                        'action': 'search_streams',
+                        'imdb_id': imdb_id,
+                        'title': title,
+                        'query': search_query,
+                    }
+                ),
+                li,
+                isFolder=True,
+            )
+
+        xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+    except Exception as exc:
+        _show_search_error('search_results', exc)
+        try:
+            xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+        except Exception:
+            pass
 
 
 def list_search_streams(imdb_id, title='', search_query=''):
-    streams = search_streams(imdb_id)
+    try:
+        streams = search_streams(imdb_id)
 
-    if not streams:
-        xbmcgui.Dialog().notification(
-            APP_NAME,
-            'No streams found for "{}"'.format(title or search_query or imdb_id),
-            xbmcgui.NOTIFICATION_INFO,
-        )
-        return
+        if not streams:
+            xbmcgui.Dialog().notification(
+                APP_NAME,
+                'No streams found for "{}"'.format(title or search_query or imdb_id),
+                xbmcgui.NOTIFICATION_INFO,
+            )
+            xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+            return
 
-    xbmcplugin.setContent(HANDLE, 'videos')
+        xbmcplugin.setContent(HANDLE, 'videos')
 
-    for result in streams:
-        stream_url = result.get('url', '')
-        if not stream_url:
-            continue
+        for result in streams:
+            stream_url = result.get('url', '')
+            if not stream_url:
+                continue
 
-        raw_name = result.get('name')
-        name = raw_name.strip() if isinstance(raw_name, str) else ''
-        raw_description = result.get('description')
-        description = raw_description.strip() if isinstance(raw_description, str) else ''
+            raw_name = result.get('name')
+            name = raw_name.strip() if isinstance(raw_name, str) else ''
+            raw_description = result.get('description')
+            description = raw_description.strip() if isinstance(raw_description, str) else ''
 
-        label2 = description
-        file_name = ''
-        if 'FILENAME=' in description:
-            label2, file_name = description.split('FILENAME=', 1)
-            label2 = label2.strip()
-            file_name = file_name.strip()
+            label2 = description
+            file_name = ''
+            if 'FILENAME=' in description:
+                label2, file_name = description.split('FILENAME=', 1)
+                label2 = label2.strip()
+                file_name = file_name.strip()
 
-        label = name or 'Unknown Stream'
-        if file_name:
-            label = '{} {}'.format(label, file_name)
+            label = name or 'Unknown Stream'
+            if file_name:
+                label = '{} {}'.format(label, file_name)
 
-        li = xbmcgui.ListItem(label=label, label2=label2)
-        li.setProperty('IsPlayable', 'true')
+            li = xbmcgui.ListItem(label=label, label2=label2)
+            li.setProperty('IsPlayable', 'true')
 
-        ext = os.path.splitext(stream_url)[1].lower()
-        mime = VIDEO_MIMETYPES.get(ext)
-        if mime:
-            li.setMimeType(mime)
-            li.setContentLookup(False)
+            ext = os.path.splitext(stream_url)[1].lower()
+            mime = VIDEO_MIMETYPES.get(ext)
+            if mime:
+                li.setMimeType(mime)
+                li.setContentLookup(False)
 
-        li.setInfo(
-            'video',
-            {
-                'title': label,
-                'plot': label2 or label,
-                'mediatype': 'video',
-            },
-        )
+            li.setInfo(
+                'video',
+                {
+                    'title': label,
+                    'plot': label2 or label,
+                    'mediatype': 'video',
+                },
+            )
 
-        xbmcplugin.addDirectoryItem(
-            HANDLE,
-            build_url({'action': 'play', 'url': stream_url}),
-            li,
-            isFolder=False,
-        )
+            xbmcplugin.addDirectoryItem(
+                HANDLE,
+                build_url({'action': 'play', 'url': stream_url}),
+                li,
+                isFolder=False,
+            )
 
-    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+        xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+    except Exception as exc:
+        _show_search_error('search_streams', exc)
+        try:
+            xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+        except Exception:
+            pass
 
 
 def search():
-    search_query = _prompt_search_query()
-    if not search_query:
-        xbmcgui.Dialog().notification(APP_NAME, 'Search cancelled or failed', xbmcgui.NOTIFICATION_ERROR)
-        return
+    try:
+        search_query = _prompt_search_query()
+        if not search_query:
+            xbmcgui.Dialog().notification(APP_NAME, 'Search cancelled or failed', xbmcgui.NOTIFICATION_ERROR)
+            return
 
-    xbmc.executebuiltin(
-        'Container.Update({},replace)'.format(
-            build_url({'action': 'search_results', 'query': search_query})
+        xbmc.executebuiltin(
+            'Container.Update({},replace)'.format(
+                build_url({'action': 'search_results', 'query': search_query})
+            )
         )
-    )
+    except Exception as exc:
+        _show_search_error('search', exc)
 
 
 def choose_tmdb_movie(title, year=None, existing_tmdb_id=''):
