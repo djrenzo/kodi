@@ -1,5 +1,6 @@
 import json
 import os
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -235,3 +236,29 @@ def add_subtitles(folder_name, account_index):
 
     dialog.notification(APP_NAME, NOTIFY_SUBTITLE_SAVED.format(target_filename), xbmcgui.NOTIFICATION_INFO, 3000)
     log('Subtitle saved to {} and recorded in overrides'.format(dest_path))
+
+
+def search_subs_imdb_id(imdb_id, subtitle_lang):
+    imdb_id = (imdb_id or '').strip()
+    if not imdb_id:
+        return []
+
+    url_stream = (
+        'https://opensubtitles-v3.strem.io/subtitles/movie/{}/filename=t.json'
+    ).format(imdb_id)
+
+    try:
+        request = Request(url_stream, headers={'User-Agent': 'Mozilla/5.0'})
+        with urlopen(request, timeout=15) as response:
+            raw_stream = response.read().decode('utf-8')
+    except (HTTPError, URLError) as exc:
+        log('search: failed to fetch {}: {}'.format(url_stream, exc), xbmc.LOGWARNING)
+        return []
+
+    try:
+        data = json.loads(raw_stream).get('subtitles', [])
+        # Filter subtitles by the specified language
+        return [sub.get('url') for sub in data if sub.get('lang') == subtitle_lang]
+    except ValueError as exc:
+        log('search: invalid JSON from {}: {}'.format(url_stream, exc), xbmc.LOGWARNING)
+        return []

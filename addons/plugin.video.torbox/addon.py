@@ -34,7 +34,7 @@ from torbox_common import (
 )
 from torbox_library import export_library, export_library_item
 from torbox_setup import add_account
-from torbox_subtitles import add_subtitles, find_local_subtitles
+from torbox_subtitles import add_subtitles, find_local_subtitles, search_subs_imdb_id
 from torbox_tmdb import get_tvdb_id_from_tmdb, search_tmdb_movies, search_tmdb_tvshows
 from torbox_text import (
     CONTEXT_ADD_SUBTITLES,
@@ -106,11 +106,11 @@ def list_accounts():
             isFolder=False,
         )
 
-    li = xbmcgui.ListItem(label=MENU_MANAGE_OVERRIDES)
-    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'view_overrides'}), li, isFolder=False)
-
     li = xbmcgui.ListItem(label=MENU_SEARCH)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'search_menu'}), li, isFolder=True)
+
+    li = xbmcgui.ListItem(label=MENU_MANAGE_OVERRIDES)
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'view_overrides'}), li, isFolder=False)
 
     li = xbmcgui.ListItem(label=MENU_EXPORT_OVERRIDES)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'export_overrides'}), li, isFolder=False)
@@ -319,9 +319,19 @@ def play_item(account_index, stream_url, strm_path=None):
     xbmcplugin.setResolvedUrl(HANDLE, True, li)
 
 
-def play_search(stream_url):
+def play_search(stream_url, imdb_id=None):
+
+    subtitle_lang_options = ["eng", "spa"]
+    subs = []
+    if imdb_id:
+        lang_idx = xbmcgui.Dialog().select("Select subtitle language", subtitle_lang_options)
+        if lang_idx >= 0:
+            subtitle_lang = subtitle_lang_options[lang_idx]
+            subs = search_subs_imdb_id(imdb_id, subtitle_lang)
 
     li = xbmcgui.ListItem(path=stream_url)
+    li.setSubtitles(subs)
+    log('Found subtitles: {}'.format(subs))
     xbmcplugin.setResolvedUrl(HANDLE, True, li)
 
 
@@ -457,7 +467,7 @@ def list_search_streams(imdb_id, title='', search_query=''):
 
             xbmcplugin.addDirectoryItem(
                 HANDLE,
-                build_url({'action': 'play_search', 'url': stream_url}),
+                build_url({'action': 'play_search', 'url': stream_url, 'imdb_id': imdb_id}),
                 li,
                 isFolder=False,
             )
@@ -784,7 +794,7 @@ def router():
     elif action == 'play':
         play_item(_get_account_param(params), params.get('url', ''), params.get('strm'))
     elif action == 'play_search':
-        play_search(params.get('url', ''))
+        play_search(params.get('url', ''), params.get('imdb_id'))
     elif action == 'set_override':
         set_override(params.get('folder_name', ''), _get_account_param(params))
     elif action == 'add_subtitles':
