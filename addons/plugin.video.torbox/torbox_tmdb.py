@@ -117,9 +117,9 @@ def search_tmdb_tvshows(title, year=None, limit=TMDB_RESULT_LIMIT):
     return _search_tmdb(title, year=year, limit=limit, search_url=TMDB_SEARCH_TV_URL, media_type='tv')
 
 
-def get_tvdb_id_from_tmdb(tmdb_id, media_type: str = "tv"):
+def get_external_id_from_tmdb(tmdb_id, media_type: str = "tv" or "movie", external_source: str = "tvdb_id" or "imdb_id") -> str | None:
     """
-    Return the TVDB ID for a given TMDB ID, or None if not found.
+    Return the external ID for a given TMDB ID, or None if not found.
  
     Args:
         tmdb_id: The TMDB ID of the show (or movie).
@@ -128,7 +128,7 @@ def get_tvdb_id_from_tmdb(tmdb_id, media_type: str = "tv"):
                     this only makes sense for media_type="tv".
  
     Returns:
-        The TVDB ID as an int, or None if TMDB has no TVDB ID on file
+        The external ID as an int, or None if TMDB has no external ID on file
         (or the TMDB ID doesn't exist).
  
     Raises:
@@ -147,15 +147,15 @@ def get_tvdb_id_from_tmdb(tmdb_id, media_type: str = "tv"):
         )
         with urlopen(request, timeout=10) as response:
             data = json.loads(response.read().decode("utf-8"))
-    
-        tvdb_id = data.get("tvdb_id")
 
-        if tvdb_id is not None:
-            return str(tvdb_id)
+        ext = data.get(external_source)
 
-        log('TVDB ID not found for TMDB ID: {}'.format(tmdb_id), xbmc.LOGWARNING)
+        if ext is not None:
+            return str(ext)
+
+        log('{} ID not found for TMDB ID: {}'.format(external_source.upper(), tmdb_id), xbmc.LOGWARNING)
         return None
 
     except Exception as exc:
-        log('Error fetching TVDB ID from TMDB: {}'.format(exc), xbmc.LOGWARNING)
+        log('Error fetching {} ID from TMDB: {}'.format(external_source.upper(), exc), xbmc.LOGWARNING)
         return None

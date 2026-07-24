@@ -35,7 +35,7 @@ from torbox_common import (
 from torbox_library import export_library, export_library_item
 from torbox_setup import add_account
 from torbox_subtitles import add_subtitles, find_local_subtitles, search_subs_imdb_id
-from torbox_tmdb import get_tvdb_id_from_tmdb, search_tmdb_movies, search_tmdb_tvshows
+from torbox_tmdb import get_external_id_from_tmdb, search_tmdb_movies, search_tmdb_tvshows
 from torbox_text import (
     CONTEXT_ADD_SUBTITLES,
     CONTEXT_EXPORT_SINGLE_ITEM,
@@ -358,7 +358,17 @@ def search_results(search_query):
             )
     
     try:
-        results = search_catalog(search_query)
+        # results = search_catalog(search_query)
+
+        #  {
+        #    'id': movie_id,
+        #    'title': movie_title,
+        #    'year': int(year_match.group(0)) if year_match else None,
+        #    'poster_url': poster_url,
+        #    'plot': plot,
+        #   }
+        
+        results = search_tmdb_movies(title=search_query)
 
         if not results:
             xbmcgui.Dialog().notification(
@@ -370,16 +380,17 @@ def search_results(search_query):
             return
 
         for result in results:
-            title = result.get('name', 'Unknown Title')
-            release_info = result.get('releaseInfo')
-            year_text = ' ({})'.format(release_info) if release_info else ''
-            imdb_id = result.get('imdb_id', '')
+            title = result.get('title', 'Unknown Title')
+            year = result.get('year')
+            year_text = ' ({})'.format(year) if year else ''
+            tmdb_id = result.get('id', '')
+            # imdb_id = get_external_id_from_tmdb(tmdb_id, media_type='movie', external_source='imdb_id')
 
             li = xbmcgui.ListItem(
                 label='{}{}'.format(title, year_text),
-                label2='IMDB {}'.format(imdb_id) if imdb_id else '',
+                label2='TMDB {}'.format(tmdb_id) if tmdb_id else '',
             )
-            poster_url = result.get('poster')
+            poster_url = result.get('poster_url')
             if poster_url:
                 li.setArt({'icon': poster_url, 'thumb': poster_url, 'poster': poster_url})
             li.setInfo(
@@ -396,7 +407,7 @@ def search_results(search_query):
                 build_url(
                     {
                         'action': 'search_streams',
-                        'imdb_id': imdb_id,
+                        'tmdb_id': tmdb_id,
                         'title': title,
                         'query': search_query,
                     }
@@ -411,8 +422,9 @@ def search_results(search_query):
         xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
-def list_search_streams(imdb_id, title='', search_query=''):
+def list_search_streams(tmdb_id, title='', search_query=''):
     try:
+        imdb_id = get_external_id_from_tmdb(tmdb_id, media_type='movie', external_source='imdb_id')
         streams = search_streams(imdb_id)
 
         if not streams:
@@ -684,7 +696,7 @@ def set_override(folder_name, account_index):
                 year_value = tmdb_year
 
             # Try to fetch TVDB ID from TMDB
-            tvdb_id = get_tvdb_id_from_tmdb(tmdb_id) or ''
+            tvdb_id = get_external_id_from_tmdb(tmdb_id, media_type='tv', external_source='tvdb_id') or ''
 
             # If TVDB ID not found, show TVDB dialog as fallback
             if not tvdb_id:
@@ -813,7 +825,7 @@ def router():
         search_results(params.get('query', ''))
     elif action == 'search_streams':
         list_search_streams(
-            params.get('imdb_id', ''),
+            params.get('tmdb_id', ''),
             params.get('title', ''),
             params.get('query', ''),
         )
