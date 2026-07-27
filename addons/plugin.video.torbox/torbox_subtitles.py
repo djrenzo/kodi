@@ -188,8 +188,10 @@ def add_subtitles(folder_name, account_index):
 
             if dialog.yesno(APP_NAME, 'Do you want to shift the subtitle time?'):
                 direction = dialog.yesno(APP_NAME, 'Delay subtitles? (No = advance earlier)')
-                offset_str = dialog.numeric(xbmcgui.INPUT_NUMERIC,
-                                            'Enter offset in milliseconds:', '0')
+                offset_str = dialog.input('Enter offset in milliseconds:',
+                                defaultt='0',
+                                type=xbmcgui.INPUT_NUMERIC,
+                            )
                 if offset_str:
                     offset_ms = int(offset_str)
                     if not direction:
