@@ -187,10 +187,15 @@ def add_subtitles(folder_name, account_index):
                             log('Error converting FPS: {}'.format(e))
 
             if dialog.yesno(APP_NAME, 'Do you want to shift the subtitle time?'):
-                offset_ms = dialog.numeric(xbmcgui.DIALOG_NUMERIC, 'Enter subtitle time offset in milliseconds:', '0', type=xbmcgui.INPUT_NUMERIC)
-                if offset_ms:
+                direction = dialog.yesno(APP_NAME, 'Delay subtitles? (No = advance earlier)')
+                offset_str = dialog.numeric(xbmcgui.INPUT_NUMERIC,
+                                            'Enter offset in milliseconds:', '0')
+                if offset_str:
+                    offset_ms = int(offset_str)
+                    if not direction:
+                        offset_ms = -offset_ms
                     try:
-                        shift_srt_time(dest_path, dest_path, offset_ms=int(offset_ms))
+                        shift_srt_time(dest_path, dest_path, offset_ms=offset_ms)
                     except (ValueError, Exception) as e:
                         log('Error shifting subtitle time: {}'.format(e))
             return
