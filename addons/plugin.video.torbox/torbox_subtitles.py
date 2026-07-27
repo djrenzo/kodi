@@ -10,6 +10,7 @@ import xbmcvfs
 
 from torbox_common import APP_NAME, VIDEO_EXTS, extract_episode_info, load_overrides, log, save_overrides
 from torbox_library import get_library_folder_for
+from torbox_srt import convert_srt_fps
 from torbox_text import (
     DIALOG_LIBRARY_SUBS_EXPORT_FIRST,
     DIALOG_SUBS_ADD_TITLE,
@@ -174,6 +175,16 @@ def add_subtitles(folder_name, account_index):
 
             dialog.notification(APP_NAME, NOTIFY_SUBTITLE_SAVED.format(target_filename), xbmcgui.NOTIFICATION_INFO, 3000)
             log('Subtitle saved to {} and recorded in overrides'.format(dest_path))
+
+            if dialog.yesno(APP_NAME, 'Do you want to change the subtitle FPS?'):
+                old_fps = dialog.input('Enter old FPS:', defaultt='23.976')
+                if old_fps:
+                    new_fps = dialog.input('Enter new FPS:', defaultt='25')
+                    if new_fps:
+                        try:
+                            convert_srt_fps(dest_path, dest_path, old_fps=float(old_fps), new_fps=float(new_fps))
+                        except (ValueError, Exception) as e:
+                            log('Error converting FPS: {}'.format(e))
             return
 
     if not tmdb_id:
@@ -209,7 +220,9 @@ def add_subtitles(folder_name, account_index):
         return
 
     chosen = results[idx]
-    subtitle_url = chosen.get('url')
+    chosen_id = chosen.get('id')
+    subtitle_url = f"https://subs5.strem.io/en/download/subencoding-stremio-utf8/src-api/file/{chosen_id}"
+    # subtitle_url = chosen.get('url')
     if not subtitle_url:
         dialog.ok(APP_NAME, DIALOG_SUBS_BAD_RESULT)
         return
