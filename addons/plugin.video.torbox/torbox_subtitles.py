@@ -10,7 +10,7 @@ import xbmcvfs
 
 from torbox_common import APP_NAME, VIDEO_EXTS, extract_episode_info, load_overrides, log, save_overrides
 from torbox_library import get_library_folder_for
-from torbox_srt import convert_srt_fps
+from torbox_srt import convert_srt_fps, shift_srt_time
 from torbox_text import (
     DIALOG_LIBRARY_SUBS_EXPORT_FIRST,
     DIALOG_SUBS_ADD_TITLE,
@@ -185,6 +185,14 @@ def add_subtitles(folder_name, account_index):
                             convert_srt_fps(dest_path, dest_path, old_fps=float(old_fps), new_fps=float(new_fps))
                         except (ValueError, Exception) as e:
                             log('Error converting FPS: {}'.format(e))
+
+            if dialog.yesno(APP_NAME, 'Do you want to shift the subtitle time?'):
+                offset_ms = dialog.numeric(xbmcgui.DIALOG_NUMERIC, 'Enter subtitle time offset in milliseconds:', '0', type=xbmcgui.INPUT_NUMERIC)
+                if offset_ms:
+                    try:
+                        shift_srt_time(dest_path, dest_path, offset_ms=int(offset_ms))
+                    except (ValueError, Exception) as e:
+                        log('Error shifting subtitle time: {}'.format(e))
             return
 
     if not tmdb_id:

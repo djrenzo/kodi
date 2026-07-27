@@ -41,6 +41,29 @@ def convert_srt_fps(input_path, output_path, old_fps, new_fps):
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(converted)
 
+ 
+def shift_srt_time(input_path, output_path, offset_ms):
+    """
+    Apply a constant (linear) timeshift to every timestamp in an SRT file.
+    offset_ms: positive = delay subs (later), negative = advance subs (earlier)
+    """
+    timestamp_pattern = re.compile(
+        r'(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})'
+    )
+ 
+    def replace_timestamps(match):
+        start_ms = srt_time_to_ms(match.group(1)) + offset_ms
+        end_ms = srt_time_to_ms(match.group(2)) + offset_ms
+        return f"{ms_to_srt_time(start_ms)} --> {ms_to_srt_time(end_ms)}"
+ 
+    with open(input_path, 'r', encoding='utf-8-sig') as f:
+        content = f.read()
+ 
+    shifted = timestamp_pattern.sub(replace_timestamps, content)
+ 
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(shifted)
+
 
 # Example usage in your addon:
 # convert_srt_fps('/path/to/original.srt', '/path/to/synced.srt',
