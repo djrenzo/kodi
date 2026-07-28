@@ -35,13 +35,13 @@ class SubtitleFetcher(ABC):
             True if download was successful, False otherwise
         """
         opensubtitles_id = str(opensubtitles_id)
-        log('Downloading subtitle: {}'.format(opensubtitles_id), 'info')
+        log('Downloading subtitle: {}'.format(opensubtitles_id))
         subtitle_url = self.get_subtitle_url(opensubtitles_id)
         return download(subtitle_url, dest_path)
 
     def download_url(self, subtitles_url, dest_path):
         """Download subtitle file from the given URL."""
-        log('Downloading subtitle: {}'.format(subtitles_url), 'info')
+        log('Downloading subtitle: {}'.format(subtitles_url))
         return download(subtitles_url, dest_path)
 
 
