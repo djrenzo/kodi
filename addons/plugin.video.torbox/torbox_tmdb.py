@@ -139,7 +139,13 @@ def get_external_id_from_tmdb(tmdb_id, media_type: str = "tv" or "movie", extern
     try:
         tmdb_id = str(tmdb_id)
         url = TMDB_API.format(media_type=media_type, tmdb_id=tmdb_id)
-        data = fetch_json(url)
+        data = fetch_json(
+            url,
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {TMDB_KEY}",
+            },
+        )
 
         if data is None:
             log('No data returned from TMDB for TMDB ID: {}'.format(tmdb_id), xbmc.LOGWARNING)

@@ -42,9 +42,9 @@ def download(url, dest_path):
         log('download error: {}'.format(exc), 'warning')
         return False
 
-def fetch_json(url):
+def fetch_json(url, headers=HEADERS):
     try:
-        data = http_req(url, method='GET', headers=HEADERS, timeout=TIMEOUT_JSON)
+        data = http_req(url, method='GET', headers=headers, timeout=TIMEOUT_JSON)
         return loads(data.decode('utf-8')) if data else None
     
     except Exception as exc:
