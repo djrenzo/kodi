@@ -24,6 +24,7 @@ from torbox_common import (
     get_account,
     get_accounts,
     get_params,
+    get_top_movies,
     import_overrides,
     load_overrides,
     log,
@@ -64,6 +65,7 @@ from torbox_text import (
     MENU_EXPORT_OVERRIDES,
     MENU_SEARCH,
     MENU_SETTINGS,
+    MENU_TOP_MOVIES,
     NOTIFY_ACCOUNT_NOT_FOUND,
     NOTIFY_OVERRIDE_REMOVED,
     NOTIFY_OVERRIDE_SAVED,
@@ -105,6 +107,9 @@ def list_accounts():
             li,
             isFolder=False,
         )
+
+    li = xbmcgui.ListItem(label=MENU_TOP_MOVIES)
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'top_movies'}), li, isFolder=True)
 
     li = xbmcgui.ListItem(label=MENU_SEARCH)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'search_menu'}), li, isFolder=True)
@@ -345,6 +350,74 @@ def _show_search_error(context, exc):
     )
 
 
+def top_movies(skip):
+    log('Top movies skip="{}"'.format(skip))
+    xbmcplugin.setContent(HANDLE, 'movies')
+
+    skip = int(skip)    
+    try:
+        results = get_top_movies(skip)
+        if not results:
+            xbmcgui.Dialog().notification(
+                APP_NAME,
+                'No results found for top movies skip "{}"'.format(skip),
+                xbmcgui.NOTIFICATION_INFO,
+            )
+            xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+            return
+
+        new_skip = skip + len(results)
+
+        for result in results:
+            title = result.get('name', 'Unknown Title')
+            year = result.get('year')
+            year_text = ' ({})'.format(year) if year else ''
+            imdb_id = result.get('imdb_id', '')
+
+            li = xbmcgui.ListItem(
+                label='{}{}'.format(title, year_text),
+                label2='IMDB {}'.format(imdb_id) if imdb_id else '',
+            )
+            if imdb_id:
+                poster = f'https://images.metahub.space/poster/big/{imdb_id}/img'
+                li.setArt({'icon': poster, 'thumb': poster, 'poster': poster})
+            li.setInfo(
+                'video',
+                {
+                    'title': title,
+                    'plot': result.get('description', title),
+                    'mediatype': 'movie',
+                },
+            )
+
+            xbmcplugin.addDirectoryItem(
+                HANDLE,
+                build_url(
+                    {
+                        'action': 'search_streams',
+                        'imdb_id': imdb_id,
+                        'title': title,
+                    }
+                ),
+                li,
+                isFolder=True,
+            )
+        
+
+        new_page = xbmcgui.ListItem(label='See more')
+        xbmcplugin.addDirectoryItem(
+                    HANDLE,
+                    build_url({'action': 'top_movies', 'skip': new_skip}),
+                    new_page,
+                    isFolder=True,
+                )
+
+        xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+    except Exception as exc:
+        _show_search_error('search_results', exc)
+        xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+
+
 def search_results(search_query):
     log('Search results query="{}"'.format(search_query))
     xbmcplugin.setContent(HANDLE, 'movies')
@@ -358,15 +431,6 @@ def search_results(search_query):
             )
     
     try:
-        # results = search_catalog(search_query)
-
-        #  {
-        #    'id': movie_id,
-        #    'title': movie_title,
-        #    'year': int(year_match.group(0)) if year_match else None,
-        #    'poster_url': poster_url,
-        #    'plot': plot,
-        #   }
         
         results = search_tmdb_movies(title=search_query)
 
@@ -384,7 +448,6 @@ def search_results(search_query):
             year = result.get('year')
             year_text = ' ({})'.format(year) if year else ''
             tmdb_id = result.get('id', '')
-            # imdb_id = get_external_id_from_tmdb(tmdb_id, media_type='movie', external_source='imdb_id')
 
             li = xbmcgui.ListItem(
                 label='{}{}'.format(title, year_text),
@@ -422,9 +485,10 @@ def search_results(search_query):
         xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
-def list_search_streams(tmdb_id, title='', search_query=''):
+def list_search_streams(imdb_id, tmdb_id, title='', search_query=''):
     try:
-        imdb_id = get_external_id_from_tmdb(tmdb_id, media_type='movie', external_source='imdb_id')
+        if not imdb_id and tmdb_id:
+            imdb_id = get_external_id_from_tmdb(tmdb_id, media_type='movie', external_source='imdb_id')
         streams = search_streams(imdb_id)
 
         if not streams:
@@ -817,6 +881,8 @@ def router():
         export_overrides()
     elif action == 'import_overrides':
         import_overrides()
+    elif action == 'top_movies':
+        top_movies(skip=params.get('skip', 0))
     elif action == 'search_menu':
         search_menu()
     elif action == 'search':
@@ -825,9 +891,10 @@ def router():
         search_results(params.get('query', ''))
     elif action == 'search_streams':
         list_search_streams(
-            params.get('tmdb_id', ''),
-            params.get('title', ''),
-            params.get('query', ''),
+            imdb_id=params.get('imdb_id', None),
+            tmdb_id=params.get('tmdb_id', None),
+            title=params.get('title', ''),
+            search_query=params.get('query', ''),
         )
     elif action == 'add_account':
         add_account(_get_account_param(params))

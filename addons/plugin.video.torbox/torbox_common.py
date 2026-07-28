@@ -125,6 +125,31 @@ def search_catalog(search_query):
         return []
 
 
+def get_top_movies(skip: int):
+    url = "https://cinemeta-catalogs.strem.io/top/catalog/movie/top"
+
+    if skip < 0:
+        return []
+    elif skip == 0:
+        url = f"{url}.json"
+    else:
+        url = f"{url}/skip={skip}.json"
+
+    try:
+        request = Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urlopen(request, timeout=15) as response:
+            raw = response.read().decode('utf-8')
+    except (HTTPError, URLError) as exc:
+        log('search: failed to fetch {}: {}'.format(url, exc), xbmc.LOGWARNING)
+        return []
+
+    try:
+        return json.loads(raw).get('metas', [])
+    except ValueError as exc:
+        log('search: invalid JSON from {}: {}'.format(url, exc), xbmc.LOGWARNING)
+        return []
+
+
 def search_streams(imdb_id):
     imdb_id = (imdb_id or '').strip()
     if not imdb_id:
