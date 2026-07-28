@@ -1,16 +1,12 @@
-import json
 import os
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
 import xbmc
 import xbmcgui
-import xbmcvfs
 
 from torbox_common import APP_NAME, VIDEO_EXTS, extract_episode_info, load_overrides, log, save_overrides
 from torbox_library import get_library_folder_for
 from torbox_srt import convert_srt_fps, shift_srt_time
+from torbox_wyzie import OpenSubtitlesFetcher, WyzieFetcher
 from torbox_text import (
     DIALOG_LIBRARY_SUBS_EXPORT_FIRST,
     DIALOG_SUBS_ADD_TITLE,
@@ -30,9 +26,6 @@ from torbox_text import (
     NOTIFY_SUBTITLE_SAVED,
 )
 
-WYZIE_API = 'https://sub.wyzie.io/search'
-WYZIE_KEY = 'wyzie-gvo9qomam6re1xxww2krz89m7f0ww4ax'
-WYZIE_LIMIT = 10
 SUBTITLE_EXTS = ('.srt', '.ass', '.ssa', '.sub', '.vtt')
 SRT_LANG_CODES = {"en": "en",
                   "es": "es",
@@ -65,47 +58,6 @@ def _pick_video_basename(dialog, library_folder):
     return os.path.splitext(candidates[choice])[0]
 
 
-def fetch_subtitles(tmdb_id, language='en', season=None, episode=None):
-    params_data = {'id': tmdb_id, 'format': 'srt', 'language': language, 'key': WYZIE_KEY}
-    if season is not None:
-        params_data['season'] = int(season)
-    if episode is not None:
-        params_data['episode'] = int(episode)
-
-    params = urlencode(params_data)
-    url = '{}?{}'.format(WYZIE_API, params)
-    log('Wyzie query: {}'.format(url))
-
-    try:
-        req = Request(url, headers={'User-Agent': 'Kodi/TorBox-Plugin'})
-        response = urlopen(req, timeout=15)
-        data = json.loads(response.read().decode('utf-8'))
-        return data[:WYZIE_LIMIT] if isinstance(data, list) else []
-    except Exception as exc:
-        log('fetch_subtitles error: {}'.format(exc), xbmc.LOGWARNING)
-        return []
-
-
-def download_subtitle(sub_url, dest_path):
-    log('Downloading subtitle: {}'.format(sub_url))
-
-    try:
-        req = Request(sub_url, headers={'User-Agent': 'Kodi/TorBox-Plugin'})
-        response = urlopen(req, timeout=30)
-        data = response.read()
-
-        folder = os.path.dirname(dest_path)
-        if not xbmcvfs.exists(folder):
-            xbmcvfs.mkdirs(folder)
-
-        with xbmcvfs.File(dest_path, 'w') as fh:
-            fh.write(data.decode('utf-8', errors='replace'))
-        return True
-    except Exception as exc:
-        log('download_subtitle error: {}'.format(exc), xbmc.LOGWARNING)
-        return False
-
-
 def find_local_subtitles(strm_path):
     if not strm_path:
         return []
@@ -125,9 +77,39 @@ def find_local_subtitles(strm_path):
     return sorted(found, key=lambda value: value.lower())
 
 
+def _apply_srt_adjustments(dialog, dest_path):
+    if dialog.yesno(APP_NAME, 'Do you want to change the subtitle FPS?'):
+        old_fps = dialog.input('Enter old FPS:', defaultt='23.976')
+        if old_fps:
+            new_fps = dialog.input('Enter new FPS:', defaultt='25')
+            if new_fps:
+                try:
+                    convert_srt_fps(dest_path, dest_path, old_fps=float(old_fps), new_fps=float(new_fps))
+                except (ValueError, Exception) as exc:
+                    log('Error converting FPS: {}'.format(exc))
+
+    if dialog.yesno(APP_NAME, 'Do you want to shift the subtitle time?'):
+        direction = dialog.yesno(APP_NAME, 'Delay subtitles? (No = advance earlier)')
+        offset_str = dialog.input('Enter offset in milliseconds:', defaultt='0', type=xbmcgui.INPUT_NUMERIC)
+        if offset_str:
+            offset_ms = int(offset_str)
+            if not direction:
+                offset_ms = -offset_ms
+            try:
+                shift_srt_time(dest_path, dest_path, offset_ms=offset_ms)
+            except (ValueError, Exception) as exc:
+                log('Error shifting subtitle time: {}'.format(exc))
+
+
+def _notify_saved(dialog, dest_path, target_filename):
+    dialog.notification(APP_NAME, NOTIFY_SUBTITLE_SAVED.format(target_filename), xbmcgui.NOTIFICATION_INFO, 3000)
+    log('Subtitle saved to {} and recorded in overrides'.format(dest_path))
+
+
 def add_subtitles(folder_name, account_index):
     del account_index
 
+    fetcher = WyzieFetcher()
     overrides = load_overrides()
     override = overrides.get(folder_name, {})
     tmdb_id = override.get('tmdb_id', '').strip()
@@ -155,115 +137,76 @@ def add_subtitles(folder_name, account_index):
     language_code = language_codes[lang_idx]
 
     target_filename = '{}.{}.srt'.format(target_basename, SRT_LANG_CODES[language_code])
+    dest_path = os.path.join(library_folder, target_filename)
 
-    def existing_label(result):
-        hearing_impaired = ' [HI]' if result.get('hi') else ''
-        language = ' ({})'.format(result['language']) if result.get('language') else ''
-        return '{}{}{}'.format(result.get('fileName'), hearing_impaired, language)
-
-    existing_subs = [result for result in subs if result.get('language', 'en') == language_code and result.get('fileName', '').startswith(target_basename)]
+    existing_subs = [
+        s for s in subs
+        if s.get('language', 'en') == language_code
+        and s.get('fileName', '').startswith(target_basename)
+    ]
     if existing_subs:
-        idx = dialog.select(DIALOG_SUBS_EXISTING, [existing_label(result) for result in existing_subs])
-        if idx >= 0:
-            chosen = existing_subs[idx]
-            subtitle_url = chosen['url']
+        def existing_label(result):
+            hi = ' [HI]' if result.get('hi') else ''
+            lang = ' ({})'.format(result['language']) if result.get('language') else ''
+            return '{}{}{}'.format(result.get('fileName'), hi, lang)
 
-            dest_path = os.path.join(library_folder, target_filename)
-            if not download_subtitle(subtitle_url, dest_path):
+        idx = dialog.select(DIALOG_SUBS_EXISTING, [existing_label(s) for s in existing_subs])
+        if idx >= 0:
+            subtitle_url = existing_subs[idx]['url']
+            if not fetcher.download(subtitle_url, dest_path):
                 dialog.ok(APP_NAME, DIALOG_SUBS_DOWNLOAD_FAILED)
                 return
-
-            dialog.notification(APP_NAME, NOTIFY_SUBTITLE_SAVED.format(target_filename), xbmcgui.NOTIFICATION_INFO, 3000)
-            log('Subtitle saved to {} and recorded in overrides'.format(dest_path))
-
-            if dialog.yesno(APP_NAME, 'Do you want to change the subtitle FPS?'):
-                old_fps = dialog.input('Enter old FPS:', defaultt='23.976')
-                if old_fps:
-                    new_fps = dialog.input('Enter new FPS:', defaultt='25')
-                    if new_fps:
-                        try:
-                            convert_srt_fps(dest_path, dest_path, old_fps=float(old_fps), new_fps=float(new_fps))
-                        except (ValueError, Exception) as e:
-                            log('Error converting FPS: {}'.format(e))
-
-            if dialog.yesno(APP_NAME, 'Do you want to shift the subtitle time?'):
-                direction = dialog.yesno(APP_NAME, 'Delay subtitles? (No = advance earlier)')
-                offset_str = dialog.input('Enter offset in milliseconds:',
-                                defaultt='0',
-                                type=xbmcgui.INPUT_NUMERIC,
-                            )
-                if offset_str:
-                    offset_ms = int(offset_str)
-                    if not direction:
-                        offset_ms = -offset_ms
-                    try:
-                        shift_srt_time(dest_path, dest_path, offset_ms=offset_ms)
-                    except (ValueError, Exception) as e:
-                        log('Error shifting subtitle time: {}'.format(e))
-            return
-
-    if not tmdb_id:
-        dialog.ok(
-            DIALOG_SUBS_ADD_TITLE.format(APP_NAME),
-            DIALOG_SUBS_NEED_TMDB,
-        )
+            _notify_saved(dialog, dest_path, target_filename)
+            _apply_srt_adjustments(dialog, dest_path)
         return
 
-    season = None
-    episode = None
-    if media_type == 'tvshow':
-        season, episode = extract_episode_info(target_basename)
+    if not tmdb_id:
+        dialog.ok(DIALOG_SUBS_ADD_TITLE.format(APP_NAME), DIALOG_SUBS_NEED_TMDB)
+        return
+
+    season, episode = (extract_episode_info(target_basename) if media_type == 'tvshow' else (None, None))
 
     dialog.notification(APP_NAME, NOTIFY_SEARCHING_SUBS, xbmcgui.NOTIFICATION_INFO, 2000)
-    results = fetch_subtitles(tmdb_id, language=language_code, season=season, episode=episode)
+    results = fetcher.fetch_subtitles(tmdb_id, language=language_code, season=season, episode=episode)
     if not results and media_type == 'tvshow' and season is not None and episode is not None:
-        # Fallback for cases where provider has no episode-indexed result for the title.
-        results = fetch_subtitles(tmdb_id, language=language_code)
+        # Fallback: provider may lack episode-indexed results.
+        results = fetcher.fetch_subtitles(tmdb_id, language=language_code)
 
     if not results:
         dialog.ok(APP_NAME, DIALOG_SUBS_NOT_FOUND.format(tmdb_id))
         return
 
     def result_label(result):
-        hearing_impaired = ' [HI]' if result.get('isHearingImpaired') else ''
+        hi = ' [HI]' if result.get('isHearingImpaired') else ''
         origin = ' ({})'.format(result['origin']) if result.get('origin') else ''
         downloads = '  v{:,}'.format(result['downloadCount']) if result.get('downloadCount') else ''
-        return '{}{}{}{}'.format(result.get('fileName', result['id']), hearing_impaired, origin, downloads)
+        return '{}{}{}{}'.format(result.get('fileName', result['id']), hi, origin, downloads)
 
-    idx = dialog.select(DIALOG_SUBS_PICK, [result_label(result) for result in results])
+    idx = dialog.select(DIALOG_SUBS_PICK, [result_label(r) for r in results])
     if idx < 0:
         return
 
     chosen = results[idx]
-    chosen_id = chosen.get('id')
-    subtitle_url = f"https://subs5.strem.io/en/download/subencoding-stremio-utf8/src-api/file/{chosen_id}"
-    # subtitle_url = chosen.get('url')
-    if not subtitle_url:
-        dialog.ok(APP_NAME, DIALOG_SUBS_BAD_RESULT)
-        return
-
-    dest_path = os.path.join(library_folder, target_filename)
-    if not download_subtitle(subtitle_url, dest_path):
+    sub_id = chosen.get('id')
+    if not fetcher.download(sub_id, dest_path):
         dialog.ok(APP_NAME, DIALOG_SUBS_DOWNLOAD_FAILED)
         return
 
-    subs = override.get('subs', [])
+    subtitle_url = fetcher.get_subtitle_url(sub_id)
     if not any(saved.get('url') == subtitle_url for saved in subs):
-        subs.append(
-            {
-                'url': subtitle_url,
-                'fileName': target_filename,
-                'language': chosen.get('language', language_code),
-                'hi': chosen.get('isHearingImpaired', False),
-            }
-        )
+        metadata = {
+            'url': subtitle_url,
+            'fileName': target_filename,
+            'language': chosen.get('language', language_code),
+            'hi': chosen.get('isHearingImpaired', False),
+        }
+        subs.append(metadata)
+        fetcher.save(dest_path, metadata)
 
     override['subs'] = subs
     overrides[folder_name] = override
     save_overrides(overrides)
-
-    dialog.notification(APP_NAME, NOTIFY_SUBTITLE_SAVED.format(target_filename), xbmcgui.NOTIFICATION_INFO, 3000)
-    log('Subtitle saved to {} and recorded in overrides'.format(dest_path))
+    _notify_saved(dialog, dest_path, target_filename)
 
 
 def search_subs_imdb_id(imdb_id, subtitle_lang):
@@ -271,22 +214,5 @@ def search_subs_imdb_id(imdb_id, subtitle_lang):
     if not imdb_id:
         return []
 
-    url_stream = (
-        'https://opensubtitles-v3.strem.io/subtitles/movie/{}/filename=t.json'
-    ).format(imdb_id)
-
-    try:
-        request = Request(url_stream, headers={'User-Agent': 'Mozilla/5.0'})
-        with urlopen(request, timeout=15) as response:
-            raw_stream = response.read().decode('utf-8')
-    except (HTTPError, URLError) as exc:
-        log('search: failed to fetch {}: {}'.format(url_stream, exc), xbmc.LOGWARNING)
-        return []
-
-    try:
-        data = json.loads(raw_stream).get('subtitles', [])
-        # Filter subtitles by the specified language
-        return [sub.get('url') for sub in data if sub.get('lang') == subtitle_lang]
-    except ValueError as exc:
-        log('search: invalid JSON from {}: {}'.format(url_stream, exc), xbmc.LOGWARNING)
-        return []
+    fetcher = OpenSubtitlesFetcher()
+    return fetcher.fetch_subtitles_urls(imdb_id, language=subtitle_lang)

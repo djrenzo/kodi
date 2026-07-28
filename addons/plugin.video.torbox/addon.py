@@ -30,7 +30,6 @@ from torbox_common import (
     log,
     save_overrides,
     export_overrides,
-    search_catalog,
     search_streams,
 )
 from torbox_library import export_library, export_library_item

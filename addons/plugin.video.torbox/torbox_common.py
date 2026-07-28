@@ -15,6 +15,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from torbox_paste import paste_and_show_dialog
+from torbox_http import fetch_json
 
 ADDON = xbmcaddon.Addon()
 ADDON_ID = ADDON.getAddonInfo('id')
@@ -26,6 +27,13 @@ MAX_ACCOUNTS = 3
 APP_NAME = 'TorBox'
 
 OVERRIDES_FILE = os.path.join(PROFILE_PATH, 'overrides.json')
+
+AIO_MOVIE_URL = (
+        'https://aiostreams.elfhosted.com/stremio/75fc1abd-abf5-44e7-9d21-92ced9d69aa1/'
+        'eyJpIjoiWlRlOTYrZW1BRWRhYktKM3JsM1JZUT09IiwiZSI6IlVmdkVSU2pES0dZR2tDbExqWVBVZlpoQm5memJVSGZtVFhBL2JzUEh2VkU9IiwidCI6ImEifQ/'
+        'stream/movie/{}.json'
+    )
+TOP_MOVIES_URL = "https://cinemeta-catalogs.strem.io/top/catalog/movie/top"
 
 VIDEO_EXTS = {
     '.mkv', '.mp4', '.avi', '.mov', '.m4v', '.ts', '.m2ts', '.wmv', '.flv', '.webm',
@@ -102,52 +110,20 @@ def get_params():
                 params[key] = unquote_plus(value)
     return params
 
-def search_catalog(search_query):
-    search_query = (search_query or '').strip()
-    if not search_query:
-        return []
-
-    encoded_query = quote_plus(search_query)
-    url = 'https://v3-cinemeta.strem.io/catalog/movie/top/search={}.json'.format(encoded_query)
-
-    try:
-        request = Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urlopen(request, timeout=15) as response:
-            raw = response.read().decode('utf-8')
-    except (HTTPError, URLError) as exc:
-        log('search: failed to fetch {}: {}'.format(url, exc), xbmc.LOGWARNING)
-        return []
-
-    try:
-        return json.loads(raw).get('metas', [])
-    except ValueError as exc:
-        log('search: invalid JSON from {}: {}'.format(url, exc), xbmc.LOGWARNING)
-        return []
-
-
 def get_top_movies(skip: int):
-    url = "https://cinemeta-catalogs.strem.io/top/catalog/movie/top"
-
     if skip < 0:
         return []
     elif skip == 0:
-        url = f"{url}.json"
+        url = f"{TOP_MOVIES_URL}.json"
     else:
-        url = f"{url}/skip={skip}.json"
+        url = f"{TOP_MOVIES_URL}/skip={skip}.json"
 
-    try:
-        request = Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urlopen(request, timeout=15) as response:
-            raw = response.read().decode('utf-8')
-    except (HTTPError, URLError) as exc:
-        log('search: failed to fetch {}: {}'.format(url, exc), xbmc.LOGWARNING)
-        return []
+    data = fetch_json(url)
 
-    try:
-        return json.loads(raw).get('metas', [])
-    except ValueError as exc:
-        log('search: invalid JSON from {}: {}'.format(url, exc), xbmc.LOGWARNING)
-        return []
+    if data:
+        return data.get('metas', [])
+    
+    return []
 
 
 def search_streams(imdb_id):
@@ -155,25 +131,12 @@ def search_streams(imdb_id):
     if not imdb_id:
         return []
 
-    url_stream = (
-        'https://aiostreams.elfhosted.com/stremio/75fc1abd-abf5-44e7-9d21-92ced9d69aa1/'
-        'eyJpIjoiWlRlOTYrZW1BRWRhYktKM3JsM1JZUT09IiwiZSI6IlVmdkVSU2pES0dZR2tDbExqWVBVZlpoQm5memJVSGZtVFhBL2JzUEh2VkU9IiwidCI6ImEifQ/'
-        'stream/movie/{}.json'
-    ).format(imdb_id)
+    url_stream = AIO_MOVIE_URL.format(imdb_id)
+    data = fetch_json(url_stream)
+    if data:
+        return data.get('streams', [])
 
-    try:
-        request = Request(url_stream, headers={'User-Agent': 'Mozilla/5.0'})
-        with urlopen(request, timeout=15) as response:
-            raw_stream = response.read().decode('utf-8')
-    except (HTTPError, URLError) as exc:
-        log('search: failed to fetch {}: {}'.format(url_stream, exc), xbmc.LOGWARNING)
-        return []
-
-    try:
-        return json.loads(raw_stream).get('streams', [])
-    except ValueError as exc:
-        log('search: invalid JSON from {}: {}'.format(url_stream, exc), xbmc.LOGWARNING)
-        return []
+    return []
 
 
 def load_overrides():

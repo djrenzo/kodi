@@ -2,14 +2,15 @@ import re
 from html import unescape
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
-import json
 
 import xbmc
 
 from torbox_common import log
+from torbox_http import fetch_json
 
 TMDB_KEY = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMDUxYjA5Nzc5Y2JiNDI1NjUyMmNhYjQzZTE4YzY1NSIsIm5iZiI6MTc3NTIzNzAxMC43NDg5OTk4LCJzdWIiOiI2OWNmZjc5Mjg4ZjBhMDQ1NDRkMjk4N2YiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.igCod8FKscZMklnvK9oiyfFMjy0Eyym50sGrj0knX4c"
-
+TMDB_API = "https://api.themoviedb.org/3/{media_type}/{tmdb_id}/external_ids"
+IMDB_API = "https://v3-cinemeta.strem.io/meta/{media_type}/{imdb_id}.json"
 TMDB_SEARCH_MOVIE_URL = 'https://www.themoviedb.org/search/movie'
 TMDB_SEARCH_TV_URL = 'https://www.themoviedb.org/search/tv'
 TMDB_RESULT_LIMIT = 10
@@ -136,17 +137,12 @@ def get_external_id_from_tmdb(tmdb_id, media_type: str = "tv" or "movie", extern
                                  TMDB ID not found -> 404).
     """
     try:
-        url = f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}/external_ids"
- 
-        request = Request(
-            url,
-            headers={
-                "Accept": "application/json",
-                "Authorization": f"Bearer {TMDB_KEY}",
-            },
-        )
-        with urlopen(request, timeout=10) as response:
-            data = json.loads(response.read().decode("utf-8"))
+        url = TMDB_API.format(media_type=media_type, tmdb_id=tmdb_id)
+        data = fetch_json(url)
+
+        if data is None:
+            log('No data returned from TMDB for TMDB ID: {}'.format(tmdb_id), xbmc.LOGWARNING)
+            return None
 
         ext = data.get(external_source)
 
@@ -158,4 +154,32 @@ def get_external_id_from_tmdb(tmdb_id, media_type: str = "tv" or "movie", extern
 
     except Exception as exc:
         log('Error fetching {} ID from TMDB: {}'.format(external_source.upper(), exc), xbmc.LOGWARNING)
+        return None
+
+
+def get_external_id_from_imdb(imdb_id, media_type: str = "tv" or "movie", external_source: str = "tvdb_id" or "tmdb_id") -> str | None:
+    if media_type == "tv":
+        media_type = "series"
+
+    if external_source == "tmdb_id":
+        external_source = "moviedb_id"
+
+    try:
+        url = IMDB_API.format(media_type=media_type, imdb_id=imdb_id)
+        data = fetch_json(url)
+
+        if data is None:
+            log('No data returned from IMDB for IMDB ID: {}'.format(imdb_id), xbmc.LOGWARNING)
+            return None
+
+        ext = data.get(external_source)
+
+        if ext is not None:
+            return str(ext)
+
+        log('{} ID not found for IMDB ID: {}'.format(external_source.upper(), imdb_id), xbmc.LOGWARNING)
+        return None
+
+    except Exception as exc:
+        log('Error fetching {} ID from IMDB: {}'.format(external_source.upper(), exc), xbmc.LOGWARNING)
         return None
