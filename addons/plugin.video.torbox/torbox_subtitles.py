@@ -153,7 +153,7 @@ def add_subtitles(folder_name, account_index):
         idx = dialog.select(DIALOG_SUBS_EXISTING, [existing_label(s) for s in existing_subs])
         if idx >= 0:
             subtitle_url = existing_subs[idx]['url']
-            if not fetcher.download(subtitle_url, dest_path):
+            if not fetcher.download_url(subtitle_url, dest_path):
                 dialog.ok(APP_NAME, DIALOG_SUBS_DOWNLOAD_FAILED)
                 return
             _notify_saved(dialog, dest_path, target_filename)
@@ -201,7 +201,6 @@ def add_subtitles(folder_name, account_index):
             'hi': chosen.get('isHearingImpaired', False),
         }
         subs.append(metadata)
-        fetcher.save(dest_path, metadata)
 
     override['subs'] = subs
     overrides[folder_name] = override
@@ -210,7 +209,7 @@ def add_subtitles(folder_name, account_index):
 
 
 def search_subs_imdb_id(imdb_id, subtitle_lang):
-    imdb_id = (imdb_id or '').strip()
+    imdb_id = (str(imdb_id) or '').strip()
     if not imdb_id:
         return []
 

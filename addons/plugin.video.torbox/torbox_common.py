@@ -130,7 +130,7 @@ def get_top_movies(skip: int):
 def search_streams(imdb_id):
     from torbox_http import fetch_json
     
-    imdb_id = (imdb_id or '').strip()
+    imdb_id = (str(imdb_id) or '').strip()
     if not imdb_id:
         return []
 

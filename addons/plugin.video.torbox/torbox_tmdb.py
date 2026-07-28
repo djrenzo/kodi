@@ -137,6 +137,7 @@ def get_external_id_from_tmdb(tmdb_id, media_type: str = "tv" or "movie", extern
                                  TMDB ID not found -> 404).
     """
     try:
+        tmdb_id = str(tmdb_id)
         url = TMDB_API.format(media_type=media_type, tmdb_id=tmdb_id)
         data = fetch_json(url)
 
@@ -165,6 +166,7 @@ def get_external_id_from_imdb(imdb_id, media_type: str = "tv" or "movie", extern
         external_source = "moviedb_id"
 
     try:
+        imdb_id = str(imdb_id)
         url = IMDB_API.format(media_type=media_type, imdb_id=imdb_id)
         data = fetch_json(url)
 
