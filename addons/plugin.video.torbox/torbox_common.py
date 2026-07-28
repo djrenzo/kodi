@@ -15,7 +15,6 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from torbox_paste import paste_and_show_dialog
-from torbox_http import fetch_json
 
 ADDON = xbmcaddon.Addon()
 ADDON_ID = ADDON.getAddonInfo('id')
@@ -111,6 +110,8 @@ def get_params():
     return params
 
 def get_top_movies(skip: int):
+    from torbox_http import fetch_json
+    
     if skip < 0:
         return []
     elif skip == 0:
@@ -127,6 +128,8 @@ def get_top_movies(skip: int):
 
 
 def search_streams(imdb_id):
+    from torbox_http import fetch_json
+    
     imdb_id = (imdb_id or '').strip()
     if not imdb_id:
         return []
