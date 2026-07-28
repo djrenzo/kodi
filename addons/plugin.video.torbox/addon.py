@@ -65,6 +65,7 @@ from torbox_text import (
     MENU_SEARCH,
     MENU_SETTINGS,
     MENU_TOP_MOVIES,
+    MENU_TOP_SERIES,
     NOTIFY_ACCOUNT_NOT_FOUND,
     NOTIFY_OVERRIDE_REMOVED,
     NOTIFY_OVERRIDE_SAVED,
@@ -109,6 +110,9 @@ def list_accounts():
 
     li = xbmcgui.ListItem(label=MENU_TOP_MOVIES)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'top_movies'}), li, isFolder=True)
+
+    li = xbmcgui.ListItem(label=MENU_TOP_SERIES)
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'top_series'}), li, isFolder=True)
 
     li = xbmcgui.ListItem(label=MENU_SEARCH)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'search_menu'}), li, isFolder=True)
@@ -355,7 +359,7 @@ def top_movies(skip):
 
     skip = int(skip)    
     try:
-        results = get_top_movies(skip)
+        results = get_top_movies(skip, media_type='movie')
         if not results:
             xbmcgui.Dialog().notification(
                 APP_NAME,
@@ -407,6 +411,74 @@ def top_movies(skip):
         xbmcplugin.addDirectoryItem(
                     HANDLE,
                     build_url({'action': 'top_movies', 'skip': new_skip}),
+                    new_page,
+                    isFolder=True,
+                )
+
+        xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+    except Exception as exc:
+        _show_search_error('search_results', exc)
+        xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+
+
+def top_series(skip):
+    log('Top series skip="{}"'.format(skip))
+    xbmcplugin.setContent(HANDLE, 'tvshows')
+
+    skip = int(skip)    
+    try:
+        results = get_top_movies(skip, media_type='series')
+        if not results:
+            xbmcgui.Dialog().notification(
+                APP_NAME,
+                'No results found for top series skip "{}"'.format(skip),
+                xbmcgui.NOTIFICATION_INFO,
+            )
+            xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+            return
+
+        new_skip = skip + len(results)
+
+        for result in results:
+            title = result.get('name', 'Unknown Title')
+            year = result.get('year')
+            year_text = ' ({})'.format(year) if year else ''
+            imdb_id = result.get('imdb_id', '')
+
+            li = xbmcgui.ListItem(
+                label='{}{}'.format(title, year_text),
+                label2='IMDB {}'.format(imdb_id) if imdb_id else '',
+            )
+            if imdb_id:
+                poster = f'https://images.metahub.space/poster/big/{imdb_id}/img'
+                li.setArt({'icon': poster, 'thumb': poster, 'poster': poster})
+            li.setInfo(
+                'video',
+                {
+                    'title': title,
+                    'plot': result.get('description', title),
+                    'mediatype': 'tvshow',
+                },
+            )
+
+            xbmcplugin.addDirectoryItem(
+                HANDLE,
+                build_url(
+                    {
+                        'action': 'search_streams',
+                        'imdb_id': imdb_id,
+                        'title': title,
+                    }
+                ),
+                li,
+                isFolder=True,
+            )
+        
+
+        new_page = xbmcgui.ListItem(label='See more')
+        xbmcplugin.addDirectoryItem(
+                    HANDLE,
+                    build_url({'action': 'top_series', 'skip': new_skip}),
                     new_page,
                     isFolder=True,
                 )
@@ -882,6 +954,8 @@ def router():
         import_overrides()
     elif action == 'top_movies':
         top_movies(skip=params.get('skip', 0))
+    elif action == 'top_series':
+        top_series(skip=params.get('skip', 0))
     elif action == 'search_menu':
         search_menu()
     elif action == 'search':

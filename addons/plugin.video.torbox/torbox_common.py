@@ -32,7 +32,7 @@ AIO_MOVIE_URL = (
         'eyJpIjoiWlRlOTYrZW1BRWRhYktKM3JsM1JZUT09IiwiZSI6IlVmdkVSU2pES0dZR2tDbExqWVBVZlpoQm5memJVSGZtVFhBL2JzUEh2VkU9IiwidCI6ImEifQ/'
         'stream/movie/{}.json'
     )
-TOP_MOVIES_URL = "https://cinemeta-catalogs.strem.io/top/catalog/movie/top"
+TOP_MOVIES_URL = "https://cinemeta-catalogs.strem.io/top/catalog/{media_type}/top"
 
 VIDEO_EXTS = {
     '.mkv', '.mp4', '.avi', '.mov', '.m4v', '.ts', '.m2ts', '.wmv', '.flv', '.webm',
@@ -109,15 +109,18 @@ def get_params():
                 params[key] = unquote_plus(value)
     return params
 
-def get_top_movies(skip: int):
+def get_top_movies(skip: int, media_type):
     from torbox_http import fetch_json
-    
+    if not media_type in ['movie', 'series']:
+        raise ValueError('Invalid media_type: {}'.format(media_type))
+
+    base_url = TOP_MOVIES_URL.format(media_type=media_type)
     if skip < 0:
         return []
     elif skip == 0:
-        url = f"{TOP_MOVIES_URL}.json"
+        url = f"{base_url}.json"
     else:
-        url = f"{TOP_MOVIES_URL}/skip={skip}.json"
+        url = f"{base_url}/skip={skip}.json"
 
     data = fetch_json(url)
 
