@@ -1,5 +1,6 @@
 import re
 from html import unescape
+from typing import Iterable
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -157,19 +158,24 @@ def search_imdb_tvshows(title, year=None, limit=IMDB_RESULT_LIMIT):
     return _search_imdb(title, year=year, limit=limit, search_url=IMDB_SEARCH_API, media_type='series')
 
 
-def get_external_id_from_tmdb(tmdb_id, media_type: str = "tv" or "movie" or "series", external_source: str = "tvdb_id" or "imdb_id") -> str | None:
+def get_external_id_from_tmdb(
+    tmdb_id,
+    media_type: str = "tv" or "movie" or "series",
+    external_source: str | Iterable[str] = "tvdb_id",
+) -> str | dict[str, str | None] | None:
     """
-    Return the external ID for a given TMDB ID, or None if not found.
+    Return one or more external IDs for a given TMDB ID.
  
     Args:
         tmdb_id: The TMDB ID of the show (or movie).
         media_type: "tv" for TV shows (default) or "movie" for movies.
-                    Note: movies don't have TVDB IDs in TMDB's system;
-                    this only makes sense for media_type="tv".
+        external_source: A single external field (e.g. "tvdb_id") or an
+                 iterable of fields (e.g. ["tvdb_id", "imdb_id"]).
  
     Returns:
-        The external ID as an int, or None if TMDB has no external ID on file
-        (or the TMDB ID doesn't exist).
+        If external_source is a string, returns that value as string or None.
+        If external_source contains multiple fields, returns a dict where each
+        requested field maps to a string value or None.
  
     Raises:
         urllib.error.HTTPError: if the request fails (e.g. invalid API key,
@@ -178,11 +184,22 @@ def get_external_id_from_tmdb(tmdb_id, media_type: str = "tv" or "movie" or "ser
     
     if media_type == "series":
         media_type = "tv"
+
+    if isinstance(external_source, str):
+        requested_sources = [external_source]
+        multi = False
+    else:
+        requested_sources = [src for src in external_source if src]
+        multi = True
+
+    if not requested_sources:
+        return {} if multi else None
+
     try:
         tmdb_key = _get_tmdb_key()
         if not tmdb_key:
             log('TMDB key is empty; configure providers first', xbmc.LOGWARNING)
-            return None
+            return {} if multi else None
 
         tmdb_id = str(tmdb_id)
         url = TMDB_API.format(media_type=media_type, tmdb_id=tmdb_id)
@@ -196,19 +213,28 @@ def get_external_id_from_tmdb(tmdb_id, media_type: str = "tv" or "movie" or "ser
 
         if data is None:
             log('No data returned from TMDB for TMDB ID: {}'.format(tmdb_id), xbmc.LOGWARNING)
-            return None
+            return {} if multi else None
 
-        ext = data.get(external_source)
+        if multi or len(requested_sources) > 1:
+            result = {}
+            for source in requested_sources:
+                value = data.get(source)
+                result[source] = str(value) if value is not None else None
+            return result
+
+        source = requested_sources[0]
+        ext = data.get(source)
 
         if ext is not None:
             return str(ext)
 
-        log('{} ID not found for TMDB ID: {}'.format(external_source.upper(), tmdb_id), xbmc.LOGWARNING)
+        log('{} ID not found for TMDB ID: {}'.format(source.upper(), tmdb_id), xbmc.LOGWARNING)
         return None
 
     except Exception as exc:
-        log('Error fetching {} ID from TMDB: {}'.format(external_source.upper(), exc), xbmc.LOGWARNING)
-        return None
+        field_text = ','.join(requested_sources).upper()
+        log('Error fetching {} ID from TMDB: {}'.format(field_text, exc), xbmc.LOGWARNING)
+        return {} if multi else None
 
 
 def get_external_id_from_imdb(imdb_id, media_type: str = "tv" or "movie", external_source: str = "tvdb_id" or "tmdb_id") -> str | None:

@@ -201,6 +201,7 @@ def list_directory(account_index, remote_path, is_library_root=False):
                 year = override.get('year')
                 tvdb_id = override.get('tvdb_id', '')
                 tmdb_id = override.get('tmdb_id', '')
+                imdb_id = override.get('imdb_id', '')
                 thumb_url = override.get('thumb', '')
                 plot = override.get('plot', '')
                 media_type = override.get('type', 'tvshow')
@@ -209,6 +210,7 @@ def list_directory(account_index, remote_path, is_library_root=False):
                 clean_title, year = clean_show_name(name)
                 tvdb_id = ''
                 tmdb_id = ''
+                imdb_id = ''
                 media_type = 'tvshow'
                 display_label = LABEL_MEDIA_UNKNOWN.format("unknown", clean_title)
 
@@ -218,6 +220,8 @@ def list_directory(account_index, remote_path, is_library_root=False):
                 display_label = '{} [{}]'.format(display_label, tmdb_id)
             if tvdb_id:
                 display_label = display_label + " {" + tvdb_id + "}"
+            if imdb_id:
+                display_label = '{} <{}>'.format(display_label, imdb_id)
 
             li = xbmcgui.ListItem(label=display_label)
             info = {
@@ -232,7 +236,11 @@ def list_directory(account_index, remote_path, is_library_root=False):
                 info['year'] = year
 
             try:
-                li.setUniqueIDs({'tvdb': tvdb_id, 'tmdb': tmdb_id}, defaultUniqueID='tvdb' if tvdb_id else 'tmdb')
+                ids = {'tvdb': tvdb_id, 'tmdb': tmdb_id, 'imdb': imdb_id}
+                ids = {key: value for key, value in ids.items() if value}
+                default_id = 'tvdb' if tvdb_id else ('tmdb' if tmdb_id else 'imdb')
+                if ids:
+                    li.setUniqueIDs(ids, defaultUniqueID=default_id)
             except Exception:
                 pass
 
@@ -927,6 +935,7 @@ def set_override(folder_name, account_index):
 
     tvdb_id = ''
     tmdb_id = ''
+    imdb_id = existing.get('imdb_id', '')
     tmdb_thumb = ''
     year_value = None
     if year_str:
@@ -958,7 +967,9 @@ def set_override(folder_name, account_index):
                 year_value = tmdb_year
 
             # Try to fetch TVDB ID from TMDB
-            tvdb_id = get_external_id_from_tmdb(tmdb_id, media_type='tv', external_source='tvdb_id') or ''
+            external_ids = get_external_id_from_tmdb(tmdb_id, media_type='tv', external_source=["imdb_id", "tvdb_id"])
+            tvdb_id = external_ids.get('tvdb_id', '')
+            imdb_id = external_ids.get('imdb_id', '')
 
             # If TVDB ID not found, show TVDB dialog as fallback
             if not tvdb_id:
@@ -983,6 +994,9 @@ def set_override(folder_name, account_index):
         if tmdb_year is not None and tmdb_year != year_value:
             year_value = tmdb_year
 
+        # Try to fetch IMDB ID from TMDB
+        imdb_id = get_external_id_from_tmdb(tmdb_id, media_type='movie', external_source="imdb_id") or ''
+
     entry = {'title': title, 'type': media_type}
     if year_value is not None:
         entry['year'] = year_value
@@ -991,6 +1005,8 @@ def set_override(folder_name, account_index):
         entry['tvdb_id'] = tvdb_id.strip()
     if tmdb_id and tmdb_id.strip():
         entry['tmdb_id'] = tmdb_id.strip()
+    if imdb_id and imdb_id.strip():
+        entry['imdb_id'] = imdb_id.strip()
     if media_type in ('movie', 'tvshow'):
         if tmdb_thumb:
             entry['thumb'] = tmdb_thumb
