@@ -61,6 +61,8 @@ from torbox_text import (
     MENU_ACCOUNT_BROWSE,
     MENU_ACCOUNT_EXPORT,
     MENU_ADD_ACCOUNT,
+    MENU_TORBOX,
+    MENU_MANAGEMENT,
     MENU_IMPORT_OVERRIDES,
     MENU_MANAGE_OVERRIDES,
     MENU_EXPORT_OVERRIDES,
@@ -74,6 +76,25 @@ from torbox_text import (
     NOTIFY_SEARCHING_TMDB,
 )
 from torbox_webdav import build_authed_url, parse_propfind, propfind
+
+
+def root_menu():
+    li = xbmcgui.ListItem(label=MENU_TOP_MOVIES)
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'top_movies'}), li, isFolder=True)
+
+    li = xbmcgui.ListItem(label=MENU_TOP_SERIES)
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'top_series'}), li, isFolder=True)
+
+    li = xbmcgui.ListItem(label=MENU_SEARCH)
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'search_menu'}), li, isFolder=True)
+
+    li = xbmcgui.ListItem(label=MENU_TORBOX)
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'torbox'}), li, isFolder=True)
+
+    li = xbmcgui.ListItem(label=MENU_MANAGEMENT)
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'management'}), li, isFolder=True)
+
+    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
 def list_accounts():
@@ -110,15 +131,10 @@ def list_accounts():
             isFolder=False,
         )
 
-    li = xbmcgui.ListItem(label=MENU_TOP_MOVIES)
-    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'top_movies'}), li, isFolder=True)
+    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
-    li = xbmcgui.ListItem(label=MENU_TOP_SERIES)
-    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'top_series'}), li, isFolder=True)
 
-    li = xbmcgui.ListItem(label=MENU_SEARCH)
-    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'search_menu'}), li, isFolder=True)
-
+def management_menu():
     li = xbmcgui.ListItem(label=MENU_MANAGE_OVERRIDES)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'view_overrides'}), li, isFolder=False)
 
@@ -131,7 +147,7 @@ def list_accounts():
     li = xbmcgui.ListItem(label=MENU_SETTINGS)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'settings'}), li, isFolder=False)
 
-    xbmcplugin.endOfDirectory(HANDLE)
+    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
 def list_directory(account_index, remote_path, is_library_root=False):
@@ -492,9 +508,13 @@ def top_series(skip):
         xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
-def list_seasons(imdb_id, title):
-    log('List seasons for imdb_id="{}" title="{}"'.format(imdb_id, title))
+def list_seasons(imdb_id, tmdb_id, title):
+    log(f'List seasons for imdb_id="{imdb_id}" tmdb_id="{tmdb_id}" title="{title}"')
     xbmcplugin.setContent(HANDLE, 'tvshows')
+
+    if not imdb_id and tmdb_id: # for now only comes from search series
+        imdb_id = get_external_id_from_tmdb(tmdb_id, media_type='series', external_source='imdb_id')
+        
     seasons_list = get_seasons_list(imdb_id)
     poster = f'https://images.metahub.space/poster/big/{imdb_id}/img'
 
@@ -573,21 +593,25 @@ def list_episodes(imdb_id, title, season):
     xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
-def search_results(search_query):
+def search_results(search_query, media_type):
     log('Search results query="{}"'.format(search_query))
     xbmcplugin.setContent(HANDLE, 'movies')
 
-    new_search_item = xbmcgui.ListItem(label=f'Search again. Your search: "{search_query}"')
+    new_search_item = xbmcgui.ListItem(label=f'Search again. Your search: "{search_query}" - {media_type}')
     xbmcplugin.addDirectoryItem(
                 HANDLE,
-                build_url({'action': 'search'}),
+                build_url({'action': 'search', 'media_type': media_type}),
                 new_search_item,
                 isFolder=True,
             )
     
     try:
-        
-        results = search_tmdb_movies(title=search_query)
+        if media_type == 'movie':
+            results = search_tmdb_movies(title=search_query)
+        elif media_type == 'series':
+            results = search_tmdb_tvshows(title=search_query)
+        else:
+            results = []
 
         if not results:
             xbmcgui.Dialog().notification(
@@ -619,21 +643,34 @@ def search_results(search_query):
                     'mediatype': 'movie',
                 },
             )
-
-            xbmcplugin.addDirectoryItem(
-                HANDLE,
-                build_url(
-                    {
-                        'action': 'search_streams',
-                        'tmdb_id': tmdb_id,
-                        'title': title,
-                        'query': search_query,
-                        'media_type': "movie",
-                    }
-                ),
-                li,
-                isFolder=True,
-            )
+            if media_type == 'series':
+                xbmcplugin.addDirectoryItem(
+                    HANDLE,
+                    build_url(
+                        {
+                            'action': 'list_seasons',
+                            'tmdb_id': tmdb_id,
+                            'title': title,
+                        }
+                    ),
+                    li,
+                    isFolder=True,
+                )
+            else:
+                xbmcplugin.addDirectoryItem(
+                    HANDLE,
+                    build_url(
+                        {
+                            'action': 'search_streams',
+                            'tmdb_id': tmdb_id,
+                            'title': title,
+                            'query': search_query,
+                            'media_type': "movie",
+                        }
+                    ),
+                    li,
+                    isFolder=True,
+                )
 
         xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
     except Exception as exc:
@@ -715,18 +752,19 @@ def list_search_streams(imdb_id, tmdb_id, title='', search_query='', media_type=
 def search_menu():
     xbmcplugin.setContent(HANDLE, 'movies')
 
-    li = xbmcgui.ListItem(label='New Search')
-    li.setArt({'icon': 'DefaultAddonsSearch.png'})
-    xbmcplugin.addDirectoryItem(
-        HANDLE,
-        build_url({'action': 'search'}),
-        li,
-        isFolder=True,
-    )
+    for media_type in ['movie', 'series']:
+        li = xbmcgui.ListItem(label='New {} Search'.format(media_type.capitalize()))
+        li.setArt({'icon': 'DefaultAddonsSearch.png'})
+        xbmcplugin.addDirectoryItem(
+            HANDLE,
+            build_url({'action': 'search', 'media_type': media_type}),
+            li,
+            isFolder=True,
+        )
 
     xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
-def search():
+def search(media_type):
     keyboard = xbmc.Keyboard('', APP_NAME)
     keyboard.doModal()
 
@@ -739,7 +777,7 @@ def search():
         xbmcplugin.endOfDirectory(HANDLE, succeeded=True, cacheToDisc=False)
         return
 
-    url = build_url({'action': 'search_results', 'query': query})
+    url = build_url({'action': 'search_results', 'query': query, 'media_type': media_type})
     log('Search redirect query="{}" url={}'.format(query, url))
 
     xbmcplugin.endOfDirectory(HANDLE, succeeded=True, cacheToDisc=False)
@@ -1016,6 +1054,8 @@ def router():
     log('Action={} Params={}'.format(action, params))
 
     if action == 'root':
+        root_menu()
+    elif action == 'torbox':
         list_accounts()
     elif action == 'browse':
         list_directory(_get_account_param(params), params.get('path', '/'), params.get('library', '0') == '1')
@@ -1043,6 +1083,7 @@ def router():
         top_series(skip=params.get('skip', 0))
     elif action == 'list_seasons':
         list_seasons(imdb_id=params.get('imdb_id'), 
+                     tmdb_id=params.get('tmdb_id'),
                      title=params.get('title'))
     elif action == 'list_episodes':
         list_episodes(imdb_id=params.get('imdb_id'), 
@@ -1050,10 +1091,12 @@ def router():
                       season=params.get('season'))
     elif action == 'search_menu':
         search_menu()
+    elif action == 'management':
+        management_menu()
     elif action == 'search':
-        search()
+        search(params.get('media_type'))
     elif action == 'search_results':
-        search_results(params.get('query', ''))
+        search_results(params.get('query', ''), media_type=params.get('media_type'))
     elif action == 'search_streams':
         list_search_streams(
             imdb_id=params.get('imdb_id', None),
@@ -1078,7 +1121,7 @@ def router():
         )
     else:
         log('Unknown action: {}'.format(action), xbmc.LOGWARNING)
-        list_accounts()
+        root_menu()
 
 
 if __name__ == '__main__':
