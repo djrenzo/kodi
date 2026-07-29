@@ -453,7 +453,7 @@ PROVIDERS_SETUP_PAGE_HTML = """<!doctype html>
                 <label>
                     AIOStreams URL template
                     <input name="aiostreams_url" type="text" value="{aiostreams_value}" required>
-                    <span class="hint">Must contain placeholders: {'{'}media_type{'}'} and {'{'}imdb_id{'}'}</span>
+                    <span class="hint">Must contain placeholders: {{media_type}} and {{imdb_id}}</span>
                 </label>
                 <label>
                     TMDB bearer token

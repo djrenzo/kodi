@@ -59,106 +59,128 @@ class ConfigHandler(BaseHTTPRequestHandler):
         return
 
     def do_GET(self):
-        if _server_mode == 'providers':
-            prefill = _get_provider_prefill_settings()
-            html = PROVIDERS_SETUP_PAGE_HTML.format(
-                app_name=APP_NAME,
-                aiostreams_value=escape(prefill.get('aiostreams_url', ''), quote=True),
-                tmdb_key_value=escape(prefill.get('tmdb_key', ''), quote=True),
-                wyzie_key_value=escape(prefill.get('wyzie_key', ''), quote=True),
-            )
-        else:
-            prefill = _get_prefill_settings(_server_account_id)
-            html = SETUP_PAGE_HTML.format(
-                app_name=APP_NAME,
-                account=_server_account_id,
-                url_value=escape(prefill.get('url', ''), quote=True),
-                username_value=escape(prefill.get('username', ''), quote=True),
-            )
+        try:
+            if _server_mode == 'providers':
+                prefill = _get_provider_prefill_settings()
+                html = PROVIDERS_SETUP_PAGE_HTML.format(
+                    app_name=APP_NAME,
+                    aiostreams_value=escape(prefill.get('aiostreams_url', ''), quote=True),
+                    tmdb_key_value=escape(prefill.get('tmdb_key', ''), quote=True),
+                    wyzie_key_value=escape(prefill.get('wyzie_key', ''), quote=True),
+                )
+            else:
+                prefill = _get_prefill_settings(_server_account_id)
+                html = SETUP_PAGE_HTML.format(
+                    app_name=APP_NAME,
+                    account=_server_account_id,
+                    url_value=escape(prefill.get('url', ''), quote=True),
+                    username_value=escape(prefill.get('username', ''), quote=True),
+                )
 
-        self.send_response(200)
-        self.send_header('Content-Type', 'text/html; charset=utf-8')
-        self.end_headers()
-        self.wfile.write(html.encode('utf-8'))
-
-    def do_POST(self):
-        global _qr_window
-        length = int(self.headers.get('Content-Length', '0'))
-        if length <= 0:
-            self.send_response(400)
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(html.encode('utf-8'))
+        except Exception as exc:
+            self.send_response(500)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.end_headers()
             self.wfile.write(
                 SETUP_RESULT_ERROR_HTML.format(
                     app_name=APP_NAME,
-                    error_message='Missing form data.',
+                    error_message='Failed to render setup page: {}'.format(exc),
                 ).encode('utf-8')
             )
-            return
 
-        data = self.rfile.read(length).decode('utf-8')
-        form = parse_qs(data)
-
-        if _server_mode == 'providers':
-            aiostreams_url = form.get('aiostreams_url', [''])[0].strip()
-            tmdb_key = form.get('tmdb_key', [''])[0].strip()
-            wyzie_key = form.get('wyzie_key', [''])[0].strip()
-
-            if not aiostreams_url or not tmdb_key or not wyzie_key:
+    def do_POST(self):
+        global _qr_window
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+            if length <= 0:
                 self.send_response(400)
                 self.send_header('Content-Type', 'text/html; charset=utf-8')
                 self.end_headers()
                 self.wfile.write(
                     SETUP_RESULT_ERROR_HTML.format(
                         app_name=APP_NAME,
-                        error_message='Please go back and complete all provider fields before saving.',
+                        error_message='Missing form data.',
                     ).encode('utf-8')
                 )
                 return
 
-            if not _is_valid_aiostreams_template(aiostreams_url):
-                self.send_response(400)
-                self.send_header('Content-Type', 'text/html; charset=utf-8')
-                self.end_headers()
-                self.wfile.write(
-                    SETUP_RESULT_ERROR_HTML.format(
-                        app_name=APP_NAME,
-                        error_message='AIOStreams URL must start with http(s) and include {media_type} and {imdb_id}.',
-                    ).encode('utf-8')
-                )
-                return
+            data = self.rfile.read(length).decode('utf-8')
+            form = parse_qs(data)
 
-            ADDON.setSettingString('aiostreams_url', aiostreams_url)
-            ADDON.setSettingString('tmdb_key', tmdb_key)
-            ADDON.setSettingString('wyzie_key', wyzie_key)
-        else:
-            url = form.get('url', [''])[0]
-            username = form.get('username', [''])[0]
-            password = form.get('password', [''])[0]
+            if _server_mode == 'providers':
+                aiostreams_url = form.get('aiostreams_url', [''])[0].strip()
+                tmdb_key = form.get('tmdb_key', [''])[0].strip()
+                wyzie_key = form.get('wyzie_key', [''])[0].strip()
 
-            if not url.strip() or not username.strip() or not password:
-                self.send_response(400)
-                self.send_header('Content-Type', 'text/html; charset=utf-8')
-                self.end_headers()
-                self.wfile.write(
-                    SETUP_RESULT_ERROR_HTML.format(
-                        app_name=APP_NAME,
-                        error_message='Please go back and complete all fields before saving.',
-                    ).encode('utf-8')
-                )
-                return
+                if not aiostreams_url or not tmdb_key or not wyzie_key:
+                    self.send_response(400)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.end_headers()
+                    self.wfile.write(
+                        SETUP_RESULT_ERROR_HTML.format(
+                            app_name=APP_NAME,
+                            error_message='Please go back and complete all provider fields before saving.',
+                        ).encode('utf-8')
+                    )
+                    return
 
-            save_credentials(_server_account_id, url.strip(), username.strip(), password)
+                if not _is_valid_aiostreams_template(aiostreams_url):
+                    self.send_response(400)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.end_headers()
+                    self.wfile.write(
+                        SETUP_RESULT_ERROR_HTML.format(
+                            app_name=APP_NAME,
+                            error_message='AIOStreams URL must start with http(s) and include {media_type} and {imdb_id}.',
+                        ).encode('utf-8')
+                    )
+                    return
 
-        self.send_response(200)
-        self.send_header('Content-Type', 'text/html; charset=utf-8')
-        self.end_headers()
-        self.wfile.write(SETUP_RESULT_OK_HTML.format(app_name=APP_NAME).encode('utf-8'))
+                ADDON.setSettingString('aiostreams_url', aiostreams_url)
+                ADDON.setSettingString('tmdb_key', tmdb_key)
+                ADDON.setSettingString('wyzie_key', wyzie_key)
+            else:
+                url = form.get('url', [''])[0]
+                username = form.get('username', [''])[0]
+                password = form.get('password', [''])[0]
 
-        threading.Thread(target=_server.shutdown, daemon=True).start()
+                if not url.strip() or not username.strip() or not password:
+                    self.send_response(400)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.end_headers()
+                    self.wfile.write(
+                        SETUP_RESULT_ERROR_HTML.format(
+                            app_name=APP_NAME,
+                            error_message='Please go back and complete all fields before saving.',
+                        ).encode('utf-8')
+                    )
+                    return
 
-        if _qr_window is not None:
-            _qr_window.close()
+                save_credentials(_server_account_id, url.strip(), username.strip(), password)
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(SETUP_RESULT_OK_HTML.format(app_name=APP_NAME).encode('utf-8'))
+
+            threading.Thread(target=_server.shutdown, daemon=True).start()
+
+            if _qr_window is not None:
+                _qr_window.close()
+        except Exception as exc:
+            self.send_response(500)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(
+                SETUP_RESULT_ERROR_HTML.format(
+                    app_name=APP_NAME,
+                    error_message='Failed to process setup form: {}'.format(exc),
+                ).encode('utf-8')
+            )
 
 
 def _start_setup_server(account_id=None, mode='account', port=8765):
