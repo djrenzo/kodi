@@ -8,6 +8,7 @@ MENU_TOP_SERIES = '[COLOR springgreen]Top Series[/COLOR]'
 MENU_SEARCH = '[COLOR springgreen]Search[/COLOR]'
 MENU_TORBOX = '[COLOR springgreen]TorBox[/COLOR]'
 MENU_MANAGEMENT = '[COLOR yellow]Management[/COLOR]'
+MENU_CONFIGURE_PROVIDERS = '[COLOR yellow]Configure provider keys via Phone[/COLOR]'
 MENU_MANAGE_OVERRIDES = '[COLOR yellow]Manage show overrides[/COLOR]'
 MENU_EXPORT_OVERRIDES = '[COLOR yellow]Export overrides[/COLOR]'
 MENU_IMPORT_OVERRIDES = '[COLOR yellow]Import overrides[/COLOR]'
@@ -77,6 +78,7 @@ DIALOG_LIBRARY_SOURCE_ADDED = (
 DIALOG_LIBRARY_SUBS_EXPORT_FIRST = 'Library path not configured. Export the library first.'
 
 DIALOG_SETUP_SCAN_LABEL = 'Scan with your phone to add your {} account'
+DIALOG_SETUP_SCAN_PROVIDERS_LABEL = 'Scan with your phone to configure {} providers'
 
 SETUP_PAGE_HTML = """<!doctype html>
 <html lang="en">
@@ -313,6 +315,163 @@ SETUP_PAGE_HTML = """<!doctype html>
 </html>
 """
 
+PROVIDERS_SETUP_PAGE_HTML = """<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{app_name} Providers Setup</title>
+    <style>
+        :root {{
+            --bg-a: #ecf6ff;
+            --bg-b: #edf9f5;
+            --ink: #0f1f2e;
+            --muted: #5f7386;
+            --panel: #ffffff;
+            --line: #d4e1ec;
+            --brand-a: #005f88;
+            --brand-b: #14a8a2;
+            --brand-c: #0a7da8;
+            --focus: rgba(10, 125, 168, 0.2);
+            --shadow: 0 20px 48px rgba(17, 45, 68, 0.14);
+        }}
+
+        * {{ box-sizing: border-box; }}
+
+        body {{
+            margin: 0;
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            padding: 24px;
+            color: var(--ink);
+            font-family: "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+            background:
+                radial-gradient(1200px 540px at -15% 110%, #cfefff 0%, transparent 55%),
+                radial-gradient(1100px 520px at 120% -30%, #cbf6ec 0%, transparent 58%),
+                linear-gradient(160deg, var(--bg-a), var(--bg-b));
+        }}
+
+        .card {{
+            width: 100%;
+            max-width: 620px;
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            overflow: hidden;
+            background: var(--panel);
+            box-shadow: var(--shadow);
+        }}
+
+        .hero {{
+            position: relative;
+            padding: 24px;
+            background: linear-gradient(135deg, var(--brand-a), var(--brand-b));
+            color: #ffffff;
+        }}
+
+        h1 {{
+            margin: 0;
+            font-size: 24px;
+            line-height: 1.2;
+            font-weight: 750;
+        }}
+
+        .main {{
+            padding: 24px;
+        }}
+
+        .desc {{
+            margin: 0 0 16px;
+            line-height: 1.48;
+            color: var(--muted);
+            font-size: 14px;
+        }}
+
+        form {{
+            display: grid;
+            gap: 13px;
+        }}
+
+        label {{
+            display: grid;
+            gap: 6px;
+            font-size: 14px;
+            font-weight: 640;
+        }}
+
+        input {{
+            width: 100%;
+            border-radius: 10px;
+            border: 1px solid var(--line);
+            background: #ffffff;
+            color: var(--ink);
+            font-size: 14px;
+            padding: 12px 13px;
+            outline: none;
+            transition: border-color .16s ease, box-shadow .16s ease;
+        }}
+
+        input:focus {{
+            border-color: var(--brand-c);
+            box-shadow: 0 0 0 3px var(--focus);
+        }}
+
+        .hint {{
+            color: var(--muted);
+            font-size: 12px;
+        }}
+
+        button {{
+            margin-top: 4px;
+            border: 0;
+            border-radius: 10px;
+            color: #ffffff;
+            background: linear-gradient(135deg, var(--brand-a), var(--brand-b));
+            padding: 12px 16px;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: .02em;
+            cursor: pointer;
+        }}
+
+        .foot {{
+            border-top: 1px solid var(--line);
+            padding: 12px 24px 16px;
+            color: var(--muted);
+            font-size: 12px;
+        }}
+    </style>
+</head>
+<body>
+    <main class="card">
+        <header class="hero">
+            <h1>Configure Provider Keys</h1>
+        </header>
+        <section class="main">
+            <p class="desc">These values are stored in Kodi addon settings and used by search, streams and subtitles.</p>
+            <form method="POST" novalidate>
+                <label>
+                    AIOStreams URL template
+                    <input name="aiostreams_url" type="text" value="{aiostreams_value}" required>
+                    <span class="hint">Must contain placeholders: {'{'}media_type{'}'} and {'{'}imdb_id{'}'}</span>
+                </label>
+                <label>
+                    TMDB bearer token
+                    <input name="tmdb_key" type="text" value="{tmdb_key_value}" required>
+                </label>
+                <label>
+                    Wyzie API key
+                    <input name="wyzie_key" type="text" value="{wyzie_key_value}" required>
+                </label>
+                <button type="submit">Save Provider Settings</button>
+            </form>
+        </section>
+        <div class="foot">After saving, return to Kodi.</div>
+    </main>
+</body>
+</html>
+"""
+
 SETUP_RESULT_OK_HTML = """<!doctype html>
 <html lang="en">
 <head>
@@ -410,8 +569,8 @@ SETUP_RESULT_ERROR_HTML = """<!doctype html>
 <body>
     <main class="card">
         <div class="warn">!</div>
-        <h2>Missing Form Data</h2>
-        <p>Please go back and complete all fields before saving.</p>
+        <h2>Setup Error</h2>
+        <p>{error_message}</p>
     </main>
 </body>
 </html>

@@ -32,4 +32,9 @@
     <setting id="stream_verify_ssl" type="bool" label="Verify SSL certificates" default="true"/>
     <setting id="show_hidden" type="bool" label="Show hidden files" default="false"/>
   </category>
+  <category label="Providers">
+    <setting id="aiostreams_url" type="text" label="AIOStreams URL Template" default="https://aiostreams.elfhosted.com/stremio/75fc1abd-abf5-44e7-9d21-92ced9d69aa1/eyJpIjoiWlRlOTYrZW1BRWRhYktKM3JsM1JZUT09IiwiZSI6IlVmdkVSU2pES0dZR2tDbExqWVBVZlpoQm5memJVSGZtVFhBL2JzUEh2VkU9IiwidCI6ImEifQ/stream/{media_type}/{imdb_id}.json"/>
+    <setting id="tmdb_key" type="text" label="TMDB Bearer Token" option="hidden" default="eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMDUxYjA5Nzc5Y2JiNDI1NjUyMmNhYjQzZTE4YzY1NSIsIm5iZiI6MTc3NTIzNzAxMC43NDg5OTk4LCJzdWIiOiI2OWNmZjc5Mjg4ZjBhMDQ1NDRkMjk4N2YiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.igCod8FKscZMklnvK9oiyfFMjy0Eyym50sGrj0knX4c"/>
+    <setting id="wyzie_key" type="text" label="Wyzie API Key" option="hidden" default="wyzie-gvo9qomam6re1xxww2krz89m7f0ww4ax"/>
+  </category>
 </settings>

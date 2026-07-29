@@ -35,7 +35,7 @@ from torbox_common import (
     search_streams,
 )
 from torbox_library import export_library, export_library_item
-from torbox_setup import add_account
+from torbox_setup import add_account, configure_providers
 from torbox_subtitles import add_subtitles, find_local_subtitles, search_subs_imdb_id
 from torbox_tmdb import get_external_id_from_tmdb, search_tmdb_movies, search_tmdb_tvshows
 from torbox_text import (
@@ -61,6 +61,7 @@ from torbox_text import (
     MENU_ACCOUNT_BROWSE,
     MENU_ACCOUNT_EXPORT,
     MENU_ADD_ACCOUNT,
+    MENU_CONFIGURE_PROVIDERS,
     MENU_TORBOX,
     MENU_MANAGEMENT,
     MENU_IMPORT_OVERRIDES,
@@ -135,6 +136,9 @@ def list_accounts():
 
 
 def management_menu():
+    li = xbmcgui.ListItem(label=MENU_CONFIGURE_PROVIDERS)
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'configure_providers'}), li, isFolder=False)
+
     li = xbmcgui.ListItem(label=MENU_MANAGE_OVERRIDES)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'view_overrides'}), li, isFolder=False)
 
@@ -1107,6 +1111,8 @@ def router():
         )
     elif action == 'add_account':
         add_account(_get_account_param(params))
+    elif action == 'configure_providers':
+        configure_providers()
     elif action == 'settings':
         ADDON.openSettings()
     elif action == 'refresh':

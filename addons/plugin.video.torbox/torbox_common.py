@@ -27,11 +27,6 @@ APP_NAME = 'TorBox'
 
 OVERRIDES_FILE = os.path.join(PROFILE_PATH, 'overrides.json')
 
-AIO_MOVIE_URL = (
-        'https://aiostreams.elfhosted.com/stremio/75fc1abd-abf5-44e7-9d21-92ced9d69aa1/'
-        'eyJpIjoiWlRlOTYrZW1BRWRhYktKM3JsM1JZUT09IiwiZSI6IlVmdkVSU2pES0dZR2tDbExqWVBVZlpoQm5memJVSGZtVFhBL2JzUEh2VkU9IiwidCI6ImEifQ/'
-        'stream/{media_type}/{imdb_id}.json'
-    )
 TOP_MOVIES_URL = "https://cinemeta-catalogs.strem.io/top/catalog/{media_type}/top"
 SERIES_URL = "https://v3-cinemeta.strem.io/meta/series/{imdb_id}.json"
 
@@ -178,7 +173,17 @@ def search_streams(media_type, imdb_id):
     if not imdb_id:
         return []
 
-    url_stream = AIO_MOVIE_URL.format(media_type=media_type, imdb_id=imdb_id)
+    aiostreams_url = ADDON.getSettingString('aiostreams_url').strip()
+    if not aiostreams_url:
+        log('search_streams: aiostreams_url is empty', xbmc.LOGWARNING)
+        return []
+
+    try:
+        url_stream = aiostreams_url.format(media_type=media_type, imdb_id=imdb_id)
+    except Exception as exc:
+        log('search_streams: invalid aiostreams_url template: {}'.format(exc), xbmc.LOGWARNING)
+        return []
+
     data = fetch_json(url_stream)
     if data:
         return data.get('streams', [])

@@ -5,15 +5,16 @@ from urllib.request import Request, urlopen
 
 import xbmc
 
-from torbox_common import log
+from torbox_common import ADDON, log
 from torbox_http import fetch_json
 
-TMDB_KEY = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMDUxYjA5Nzc5Y2JiNDI1NjUyMmNhYjQzZTE4YzY1NSIsIm5iZiI6MTc3NTIzNzAxMC43NDg5OTk4LCJzdWIiOiI2OWNmZjc5Mjg4ZjBhMDQ1NDRkMjk4N2YiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.igCod8FKscZMklnvK9oiyfFMjy0Eyym50sGrj0knX4c"
 TMDB_API = "https://api.themoviedb.org/3/{media_type}/{tmdb_id}/external_ids"
 IMDB_API = "https://v3-cinemeta.strem.io/meta/{media_type}/{imdb_id}.json"
+IMDB_SEARCH_API = "	https://v3-cinemeta.strem.io/catalog/{media_type}/top/search={query}.json"
 TMDB_SEARCH_MOVIE_URL = 'https://www.themoviedb.org/search/movie'
 TMDB_SEARCH_TV_URL = 'https://www.themoviedb.org/search/tv'
 TMDB_RESULT_LIMIT = 10
+IMDB_RESULT_LIMIT = 10
 
 _CARD_START_RE = re.compile(r'data-object-id="[^"]+"')
 _POSTER_SRC_RE = re.compile(r'https://media\.themoviedb\.org/t/p/w\d+_and_h\d+_face(?P<path>/[^\s"]+)')
@@ -30,6 +31,10 @@ def _clean_html_text(value):
     text = _TAG_RE.sub(' ', value or '')
     text = unescape(text)
     return _SPACE_RE.sub(' ', text).strip()
+
+
+def _get_tmdb_key():
+    return ADDON.getSettingString('tmdb_key').strip()
 
 
 def _search_tmdb(title, year=None, limit=TMDB_RESULT_LIMIT, search_url=TMDB_SEARCH_MOVIE_URL, media_type='movie'):
@@ -110,12 +115,46 @@ def _search_tmdb(title, year=None, limit=TMDB_RESULT_LIMIT, search_url=TMDB_SEAR
     return results
 
 
+def _search_imdb(title, year=None, limit=IMDB_RESULT_LIMIT, search_url=IMDB_SEARCH_API, media_type='movie'):
+    query = (title or '').strip()
+    if not query:
+        return []
+
+    url = search_url.format(media_type=media_type, query=urlencode(query))
+    log('IMDB search query: {}'.format(url))
+
+    data = fetch_json(url)
+    if not data:
+        return []
+    
+    results = data.get("metas", [])
+
+    if len(results) > limit:
+        results = results[:limit]
+
+    return [{
+                'id': r.get("imdb_id"),
+                'title': r.get("name"),
+                'year': r.get("releaseInfo")[:4] if r.get("releaseInfo") else None,
+                'poster_url': r.get("poster"),
+                'plot': r.get("name"),
+            } for r in results]
+
+
 def search_tmdb_movies(title, year=None, limit=TMDB_RESULT_LIMIT):
     return _search_tmdb(title, year=year, limit=limit, search_url=TMDB_SEARCH_MOVIE_URL, media_type='movie')
 
 
 def search_tmdb_tvshows(title, year=None, limit=TMDB_RESULT_LIMIT):
     return _search_tmdb(title, year=year, limit=limit, search_url=TMDB_SEARCH_TV_URL, media_type='tv')
+
+
+def search_imdb_movies(title, year=None, limit=IMDB_RESULT_LIMIT):
+    return _search_imdb(title, year=year, limit=limit, search_url=IMDB_SEARCH_API, media_type='movie')
+
+
+def search_imdb_tvshows(title, year=None, limit=IMDB_RESULT_LIMIT):
+    return _search_imdb(title, year=year, limit=limit, search_url=IMDB_SEARCH_API, media_type='series')
 
 
 def get_external_id_from_tmdb(tmdb_id, media_type: str = "tv" or "movie" or "series", external_source: str = "tvdb_id" or "imdb_id") -> str | None:
@@ -140,13 +179,18 @@ def get_external_id_from_tmdb(tmdb_id, media_type: str = "tv" or "movie" or "ser
     if media_type == "series":
         media_type = "tv"
     try:
+        tmdb_key = _get_tmdb_key()
+        if not tmdb_key:
+            log('TMDB key is empty; configure providers first', xbmc.LOGWARNING)
+            return None
+
         tmdb_id = str(tmdb_id)
         url = TMDB_API.format(media_type=media_type, tmdb_id=tmdb_id)
         data = fetch_json(
             url,
             headers={
                 "Accept": "application/json",
-                "Authorization": f"Bearer {TMDB_KEY}",
+                "Authorization": f"Bearer {tmdb_key}",
             },
         )
 
