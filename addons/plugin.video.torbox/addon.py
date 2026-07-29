@@ -23,8 +23,10 @@ from torbox_common import (
     extract_episode_info,
     get_account,
     get_accounts,
+    get_episodes,
     get_params,
-    get_top_movies,
+    get_seasons_list,
+    get_top_catalog,
     import_overrides,
     load_overrides,
     log,
@@ -359,7 +361,7 @@ def top_movies(skip):
 
     skip = int(skip)    
     try:
-        results = get_top_movies(skip, media_type='movie')
+        results = get_top_catalog(skip, media_type='movie')
         if not results:
             xbmcgui.Dialog().notification(
                 APP_NAME,
@@ -400,6 +402,7 @@ def top_movies(skip):
                         'action': 'search_streams',
                         'imdb_id': imdb_id,
                         'title': title,
+                        'media_type': "movie",
                     }
                 ),
                 li,
@@ -427,7 +430,7 @@ def top_series(skip):
 
     skip = int(skip)    
     try:
-        results = get_top_movies(skip, media_type='series')
+        results = get_top_catalog(skip, media_type='series')
         if not results:
             xbmcgui.Dialog().notification(
                 APP_NAME,
@@ -465,7 +468,7 @@ def top_series(skip):
                 HANDLE,
                 build_url(
                     {
-                        'action': 'search_streams',
+                        'action': 'list_seasons',
                         'imdb_id': imdb_id,
                         'title': title,
                     }
@@ -487,6 +490,87 @@ def top_series(skip):
     except Exception as exc:
         _show_search_error('search_results', exc)
         xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+
+
+def list_seasons(imdb_id, title):
+    log('List seasons for imdb_id="{}" title="{}"'.format(imdb_id, title))
+    xbmcplugin.setContent(HANDLE, 'tvshows')
+    seasons_list = get_seasons_list(imdb_id)
+    poster = f'https://images.metahub.space/poster/big/{imdb_id}/img'
+
+    for season in seasons_list:
+        title = f'Season {season}'
+        li = xbmcgui.ListItem(
+            label='{}'.format(title),
+            label2='IMDB {}'.format(imdb_id) if imdb_id else '',
+        )
+        li.setArt({'icon': poster, 'thumb': poster, 'poster': poster})
+        li.setInfo(
+            'video',
+            {
+                'title': title,
+                'plot': title,
+                'mediatype': 'tvshow',
+            },
+        )
+
+        xbmcplugin.addDirectoryItem(
+            HANDLE,
+            build_url(
+                {
+                    'action': 'list_episodes',
+                    'imdb_id': imdb_id,
+                    'title': title,
+                    'season': season,
+                }
+            ),
+            li,
+            isFolder=True,
+        )
+
+    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+
+
+def list_episodes(imdb_id, title, season):
+    log('List episodes for imdb_id="{}" title="{}" season="{}"'.format(imdb_id, title, season))
+    xbmcplugin.setContent(HANDLE, 'tvshows')
+    episodes = get_episodes(imdb_id, season)
+
+    for episode in episodes:
+        title = episode.get('name', 'Unknown Title')
+        poster = episode.get("thumbnail")
+        episode_nbr = episode.get('episode')
+        plot = episode.get('description', title)
+        li = xbmcgui.ListItem(
+            label=f'Episode {episode_nbr} - {title}',
+            label2='IMDB {}'.format(imdb_id) if imdb_id else '',
+        )
+        
+        li.setArt({'icon': poster, 'thumb': poster, 'poster': poster})
+        li.setInfo(
+            'video',
+            {
+                'title': title,
+                'plot': plot,
+                'mediatype': 'tvshow',
+            },
+        )
+
+        xbmcplugin.addDirectoryItem(
+            HANDLE,
+            build_url(
+                {
+                    'action': 'search_streams',
+                    'imdb_id': f"{imdb_id}%3A{season}%3A{episode_nbr}",
+                    'title': title,
+                    'media_type': "series",
+                }
+            ),
+            li,
+            isFolder=True,
+        )
+
+    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
 def search_results(search_query):
@@ -544,6 +628,7 @@ def search_results(search_query):
                         'tmdb_id': tmdb_id,
                         'title': title,
                         'query': search_query,
+                        'media_type': "movie",
                     }
                 ),
                 li,
@@ -556,11 +641,11 @@ def search_results(search_query):
         xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
-def list_search_streams(imdb_id, tmdb_id, title='', search_query=''):
+def list_search_streams(imdb_id, tmdb_id, title='', search_query='', media_type='movie'):
     try:
-        if not imdb_id and tmdb_id:
-            imdb_id = get_external_id_from_tmdb(tmdb_id, media_type='movie', external_source='imdb_id')
-        streams = search_streams(imdb_id)
+        if not imdb_id and tmdb_id: # for now only comes from search movies
+            imdb_id = get_external_id_from_tmdb(tmdb_id, media_type=media_type, external_source='imdb_id')
+        streams = search_streams(media_type=media_type, imdb_id=imdb_id)
 
         if not streams:
             xbmcgui.Dialog().notification(
@@ -956,6 +1041,13 @@ def router():
         top_movies(skip=params.get('skip', 0))
     elif action == 'top_series':
         top_series(skip=params.get('skip', 0))
+    elif action == 'list_seasons':
+        list_seasons(imdb_id=params.get('imdb_id'), 
+                     title=params.get('title'))
+    elif action == 'list_episodes':
+        list_episodes(imdb_id=params.get('imdb_id'), 
+                      title=params.get('title'),
+                      season=params.get('season'))
     elif action == 'search_menu':
         search_menu()
     elif action == 'search':
@@ -968,6 +1060,7 @@ def router():
             tmdb_id=params.get('tmdb_id', None),
             title=params.get('title', ''),
             search_query=params.get('query', ''),
+            media_type=params.get('media_type', ''),
         )
     elif action == 'add_account':
         add_account(_get_account_param(params))

@@ -30,9 +30,10 @@ OVERRIDES_FILE = os.path.join(PROFILE_PATH, 'overrides.json')
 AIO_MOVIE_URL = (
         'https://aiostreams.elfhosted.com/stremio/75fc1abd-abf5-44e7-9d21-92ced9d69aa1/'
         'eyJpIjoiWlRlOTYrZW1BRWRhYktKM3JsM1JZUT09IiwiZSI6IlVmdkVSU2pES0dZR2tDbExqWVBVZlpoQm5memJVSGZtVFhBL2JzUEh2VkU9IiwidCI6ImEifQ/'
-        'stream/movie/{}.json'
+        'stream/{media_type}/{imdb_id}.json'
     )
 TOP_MOVIES_URL = "https://cinemeta-catalogs.strem.io/top/catalog/{media_type}/top"
+SERIES_URL = "https://v3-cinemeta.strem.io/meta/series/{imdb_id}.json"
 
 VIDEO_EXTS = {
     '.mkv', '.mp4', '.avi', '.mov', '.m4v', '.ts', '.m2ts', '.wmv', '.flv', '.webm',
@@ -109,7 +110,7 @@ def get_params():
                 params[key] = unquote_plus(value)
     return params
 
-def get_top_movies(skip: int, media_type):
+def get_top_catalog(skip: int, media_type):
     from torbox_http import fetch_json
     if not media_type in ['movie', 'series']:
         raise ValueError('Invalid media_type: {}'.format(media_type))
@@ -130,14 +131,54 @@ def get_top_movies(skip: int, media_type):
     return []
 
 
-def search_streams(imdb_id):
+def get_series_data(imdb_id):
+    from torbox_http import fetch_json
+    imdb_id = (str(imdb_id) or '').strip()
+
+    url = SERIES_URL.format(imdb_id=imdb_id)
+    data = fetch_json(url)
+
+    if data:
+        return data.get('meta', [])
+    
+    return []
+
+
+def get_seasons_data(imdb_id):
+    data = get_series_data(imdb_id)
+
+    if data:
+        return data.get('videos', [])
+    
+    return []
+
+
+def get_seasons_list(imdb_id):
+    data = get_seasons_data(imdb_id)
+
+    if data:
+        return sorted(list(set([e.get('season') for e in data])))
+    
+    return []
+
+
+def get_episodes(imdb_id, season):
+    data = get_seasons_data(imdb_id)
+
+    if data:
+        return [e for e in data if str(e.get('season')) == str(season)]
+    
+    return []
+
+
+def search_streams(media_type, imdb_id):
     from torbox_http import fetch_json
     
     imdb_id = (str(imdb_id) or '').strip()
     if not imdb_id:
         return []
 
-    url_stream = AIO_MOVIE_URL.format(imdb_id)
+    url_stream = AIO_MOVIE_URL.format(media_type=media_type, imdb_id=imdb_id)
     data = fetch_json(url_stream)
     if data:
         return data.get('streams', [])

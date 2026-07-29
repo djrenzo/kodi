@@ -118,7 +118,7 @@ def search_tmdb_tvshows(title, year=None, limit=TMDB_RESULT_LIMIT):
     return _search_tmdb(title, year=year, limit=limit, search_url=TMDB_SEARCH_TV_URL, media_type='tv')
 
 
-def get_external_id_from_tmdb(tmdb_id, media_type: str = "tv" or "movie", external_source: str = "tvdb_id" or "imdb_id") -> str | None:
+def get_external_id_from_tmdb(tmdb_id, media_type: str = "tv" or "movie" or "series", external_source: str = "tvdb_id" or "imdb_id") -> str | None:
     """
     Return the external ID for a given TMDB ID, or None if not found.
  
@@ -136,6 +136,9 @@ def get_external_id_from_tmdb(tmdb_id, media_type: str = "tv" or "movie", extern
         urllib.error.HTTPError: if the request fails (e.g. invalid API key,
                                  TMDB ID not found -> 404).
     """
+    
+    if media_type == "series":
+        media_type = "tv"
     try:
         tmdb_id = str(tmdb_id)
         url = TMDB_API.format(media_type=media_type, tmdb_id=tmdb_id)
