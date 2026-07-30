@@ -77,7 +77,7 @@ class OpenSubtitlesFetcher(SubtitleFetcher):
     def __init__(self, api_url=OPENSUBTITLES_SEARCH_API):
         self.api_url = api_url
 
-    def fetch_subtitles(self, imdb_id, language='eng', season=None, episode=Non):
+    def fetch_subtitles(self, imdb_id, language='eng', season=None, episode=None):
         """Fetch subtitles from OpenSubtitles API."""
         imdb_id = str(imdb_id)
         url = self.api_url.format(imdb_id)
