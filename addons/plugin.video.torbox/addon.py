@@ -26,6 +26,7 @@ from torbox_common import (
     get_episodes,
     get_params,
     get_seasons_list,
+    get_series_data,
     get_top_catalog,
     import_overrides,
     load_overrides,
@@ -37,7 +38,7 @@ from torbox_common import (
 from torbox_library import export_library, export_library_item
 from torbox_setup import add_account, configure_providers
 from torbox_subtitles import add_subtitles, find_local_subtitles, search_subs_imdb_id
-from torbox_tmdb import get_external_id_from_tmdb, get_tmbd_seasons, search_tmdb_movies, search_tmdb_tvshows
+from torbox_tmdb import get_external_id_from_tmdb, get_tmbd_seasons, query_imdb_title, search_tmdb_movies, search_tmdb_tvshows
 from torbox_text import (
     CONTEXT_ADD_SUBTITLES,
     CONTEXT_EXPORT_SINGLE_ITEM,
@@ -482,7 +483,7 @@ def top_series(skip):
                 label2='IMDB {}'.format(imdb_id) if imdb_id else '',
             )
             if imdb_id:
-                poster = f'https://images.metahub.space/poster/big/{imdb_id}/img'
+                poster = f'https://images.metahub.space/poster/medium/{imdb_id}/img'
                 li.setArt({'icon': poster, 'thumb': poster, 'poster': poster})
             li.setInfo(
                 'video',
@@ -528,13 +529,20 @@ def list_seasons(imdb_id, tmdb_id, title):
 
     if not imdb_id and tmdb_id: # for now only comes from search series
         imdb_id = get_external_id_from_tmdb(tmdb_id, media_type='series', external_source='imdb_id')
+        if not imdb_id:
+            imdb_possibilities = query_imdb_title(title)
+            for possibility in imdb_possibilities:
+                possible_data = get_series_data(possibility.get('id'))
+                if possible_data and possible_data.get('moviedb_id', '').lower() == str(tmdb_id).lower():
+                    imdb_id = possibility.get('id')
+                    break
 
     seasons_art = {}
     if tmdb_id:
         seasons_art = get_tmbd_seasons(tmdb_id)
         
     seasons_list = get_seasons_list(imdb_id)
-    poster_fallback = f'https://images.metahub.space/poster/big/{imdb_id}/img'
+    poster_fallback = f'https://images.metahub.space/poster/medium/{imdb_id}/img'
 
     for season in seasons_list:
         title = f'Season {season}'

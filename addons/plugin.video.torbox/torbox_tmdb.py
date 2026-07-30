@@ -162,6 +162,11 @@ def parse_tmdb_season(season_match):
         return season.split("/")[-1], url.split("/")[-1]
     return (None, None)
 
+def query_imdb_title(title):
+    query = f"https://v3.sg.media-imdb.com/suggestion/x/{title}.json?includeVideos=1"
+    data = fetch_json(query).get("d")
+    return data
+
 def get_tmbd_seasons(tmdb_id):
     url = "https://www.themoviedb.org/tv/{tmdb_id}/seasons".format(tmdb_id=tmdb_id)
     r = http_req(url)
