@@ -397,20 +397,21 @@ def import_overrides():
                     log('import_overrides: could not find collection {} in any account'.format(folder_name), xbmc.LOGWARNING)
                 
                 # Now download subtitle files if present
-                from torbox_subtitles import download_subtitle
+                from torbox_wyzie import OpenSubtitlesFetcher
                 from torbox_library import get_library_folder_for
                 
                 subs = override_data.get('subs', [])
                 if subs:
                     library_folder = get_library_folder_for(folder_name)
                     if library_folder:
+                        sub_fetcher = OpenSubtitlesFetcher()
                         for sub_info in subs:
                             sub_url = sub_info.get('url', '').strip()
                             filename = sub_info.get('fileName', '').strip()
                             
                             if sub_url and filename:
                                 dest_path = os.path.join(library_folder, filename)
-                                if download_subtitle(sub_url, dest_path):
+                                if sub_fetcher.download_url(sub_url, dest_path):
                                     log('import_overrides: downloaded subtitle {} for {}'.format(filename, folder_name))
                                 else:
                                     log('import_overrides: failed to download subtitle {} for {}'.format(filename, folder_name), xbmc.LOGWARNING)

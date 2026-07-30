@@ -31,6 +31,7 @@
   <category label="Playback">
     <setting id="stream_verify_ssl" type="bool" label="Verify SSL certificates" default="true"/>
     <setting id="show_hidden" type="bool" label="Show hidden files" default="false"/>
+    <setting id="show_unclassified" type="bool" label="Show unclassified content" default="true" visible="true" />
   </category>
   <category label="Providers">
     <setting id="aiostreams_url" type="text" label="AIOStreams URL Template" default="https://aiostreams.elfhosted.com/stremio/75fc1abd-abf5-44e7-9d21-92ced9d69aa1/eyJpIjoiWlRlOTYrZW1BRWRhYktKM3JsM1JZUT09IiwiZSI6IlVmdkVSU2pES0dZR2tDbExqWVBVZlpoQm5memJVSGZtVFhBL2JzUEh2VkU9IiwidCI6ImEifQ/stream/{media_type}/{imdb_id}.json"/>

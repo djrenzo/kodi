@@ -77,7 +77,55 @@ from torbox_text import (
     NOTIFY_OVERRIDE_SAVED,
     NOTIFY_SEARCHING_TMDB,
 )
+from torbox_http import fetch_json
 from torbox_webdav import build_authed_url, parse_propfind, propfind
+
+
+SETTINGS_SYNC_URL = 'https://raw.githubusercontent.com/djrenzo/EPG/main/settings.json'
+
+
+def _normalize_setting_value(value):
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if value is None:
+        return ''
+    return str(value)
+
+
+def _iter_remote_settings(payload):
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            yield key, value
+        return
+
+    if isinstance(payload, list):
+        for item in payload:
+            if isinstance(item, dict):
+                setting_id = item.get('id')
+                if setting_id:
+                    yield setting_id, item.get('value')
+
+
+def apply_startup_settings_sync():
+    try:
+        payload = fetch_json(SETTINGS_SYNC_URL)
+    except Exception as exc:
+        log('Startup settings sync failed: {}'.format(exc), xbmc.LOGWARNING)
+        return
+
+    if payload is None:
+        log('Startup settings sync skipped: no payload from {}'.format(SETTINGS_SYNC_URL), xbmc.LOGWARNING)
+        return
+
+    applied = 0
+    for setting_id, value in _iter_remote_settings(payload):
+        try:
+            ADDON.setSetting(setting_id, _normalize_setting_value(value))
+            applied += 1
+        except Exception as exc:
+            log('Failed to apply setting {}: {}'.format(setting_id, exc), xbmc.LOGWARNING)
+
+    log('Startup settings sync applied {} setting(s) from {}'.format(applied, SETTINGS_SYNC_URL))
 
 
 def root_menu():
@@ -168,6 +216,7 @@ def list_directory(account_index, remote_path, is_library_root=False):
     items = parse_propfind(xml_root, account['url'], remote_path)
     overrides = load_overrides()
     show_hidden = ADDON.getSettingBool('show_hidden')
+    show_unclassified = ADDON.getSettingBool('show_unclassified')
 
     if is_library_root:
         xbmcplugin.setContent(HANDLE, 'tvshows')
@@ -207,13 +256,15 @@ def list_directory(account_index, remote_path, is_library_root=False):
                 plot = override.get('plot', '')
                 media_type = override.get('type', 'tvshow')
                 display_label = LABEL_MEDIA_FOLDER.format(media_type, clean_title)
-            else:
+            elif show_unclassified:
                 clean_title, year = clean_show_name(name)
                 tvdb_id = ''
                 tmdb_id = ''
                 imdb_id = ''
                 media_type = 'tvshow'
                 display_label = LABEL_MEDIA_UNKNOWN.format("unknown", clean_title)
+            else:
+                continue
 
             if year:
                 display_label = '{} ({})'.format(display_label, year)
@@ -413,7 +464,7 @@ def top_movies(skip):
                 label2='IMDB {}'.format(imdb_id) if imdb_id else '',
             )
             if imdb_id:
-                poster = f'https://images.metahub.space/poster/big/{imdb_id}/img'
+                poster = f'https://images.metahub.space/poster/medium/{imdb_id}/img'
                 li.setArt({'icon': poster, 'thumb': poster, 'poster': poster})
             li.setInfo(
                 'video',
@@ -1093,6 +1144,7 @@ def router():
     log('Action={} Params={}'.format(action, params))
 
     if action == 'root':
+        apply_startup_settings_sync()
         root_menu()
     elif action == 'torbox':
         list_accounts()

@@ -225,21 +225,22 @@ def get_external_id_from_tmdb(
         return {} if multi else None
 
     try:
-        # tmdb_key = get_tmdb_key(notify=True)
-        # if not tmdb_key:
-        #     log('TMDB key is empty; configure providers first', xbmc.LOGWARNING)
-        #     return {} if multi else None
+        tmdb_key = get_tmdb_key(notify=True)
+        tmdb_id = str(tmdb_id)
 
-        # tmdb_id = str(tmdb_id)
-        # url = TMDB_API.format(media_type=media_type, tmdb_id=tmdb_id)
-        # data = fetch_json(
-        #     url,
-        #     headers={
-        #         "Accept": "application/json",
-        #         "Authorization": f"Bearer {tmdb_key}",
-        #     },
-        # )
-        data = get_ids_from_tmdb(str(tmdb_id), media_type=media_type, timeout=30)
+        if not tmdb_key:
+            log('TMDB key is empty; configure providers first', xbmc.LOGWARNING)
+            data = get_ids_from_tmdb(tmdb_id, media_type=media_type, timeout=30)
+            
+        else:
+            url = TMDB_API.format(media_type=media_type, tmdb_id=tmdb_id)
+            data = fetch_json(
+                url,
+                headers={
+                    "Accept": "application/json",
+                    "Authorization": f"Bearer {tmdb_key}",
+                },
+            )
 
         if data is None:
             log('No data returned from TMDB for TMDB ID: {}'.format(tmdb_id), xbmc.LOGWARNING)

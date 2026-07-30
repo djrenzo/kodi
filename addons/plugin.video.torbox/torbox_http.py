@@ -53,7 +53,7 @@ def http_req(url, method='GET', data=None, headers=None, timeout=TIMEOUT):
         response = urlopen(req, timeout=timeout)
         return response.read()
     except (HTTPError, URLError) as exc:
-        log('http_req error: {}'.format(exc), 'warning')
+        log('http_req error: {}'.format(exc))
         return None
 
 
@@ -70,7 +70,7 @@ def download(url, dest_path):
         return True
     
     except Exception as exc:
-        log('download error: {}'.format(exc), 'warning')
+        log('download error: {}'.format(exc))
         return False
 
 def fetch_json(url, headers=HEADERS):
