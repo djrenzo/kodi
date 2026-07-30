@@ -1,17 +1,13 @@
 from abc import ABC, abstractmethod
 from urllib.parse import urlencode
 
-from torbox_common import ADDON, log
+from torbox_common import get_wyzie_key, log
 from torbox_http import download, fetch_json
 
 WYZIE_API = 'https://sub.wyzie.io/search'
 WYZIE_LIMIT = 10
 OPENSUBTITLES_API = 'https://subs5.strem.io/en/download/subencoding-stremio-utf8/src-api/file/{}'
 OPENSUBTITLES_SEARCH_API = 'https://opensubtitles-v3.strem.io/subtitles/movie/{}/filename=t.json'
-
-
-def _get_wyzie_key():
-    return ADDON.getSettingString('wyzie_key').strip()
 
 
 class SubtitleFetcher(ABC):
@@ -53,11 +49,15 @@ class WyzieFetcher(SubtitleFetcher):
 
     def __init__(self, api_url=WYZIE_API, api_key=None, limit=WYZIE_LIMIT):
         self.api_url = api_url
-        self.api_key = api_key or _get_wyzie_key()
+        self.api_key = api_key or get_wyzie_key(notify=True)
         self.limit = limit
 
     def fetch_subtitles(self, tmdb_id, language='en', season=None, episode=None):
         """Fetch subtitles from Wyzie API."""
+        if not self.api_key:
+            log('Wyzie key is empty; configure providers first')
+            return []
+
         params_data = {'id': str(tmdb_id), 'format': 'srt', 'language': language, 'key': self.api_key}
         if season is not None:
             params_data['season'] = int(season)
@@ -77,7 +77,7 @@ class OpenSubtitlesFetcher(SubtitleFetcher):
     def __init__(self, api_url=OPENSUBTITLES_SEARCH_API):
         self.api_url = api_url
 
-    def fetch_subtitles(self, imdb_id, language='eng'):
+    def fetch_subtitles(self, imdb_id, language='eng', season=None, episode=Non):
         """Fetch subtitles from OpenSubtitles API."""
         imdb_id = str(imdb_id)
         url = self.api_url.format(imdb_id)

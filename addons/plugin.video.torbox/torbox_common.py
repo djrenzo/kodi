@@ -25,6 +25,10 @@ BASE_URL = sys.argv[0]
 MAX_ACCOUNTS = 3
 APP_NAME = 'TorBox'
 
+PROVIDER_SETTING_AIOSTREAMS_URL = 'aiostreams_url'
+PROVIDER_SETTING_TMDB_KEY = 'tmdb_key'
+PROVIDER_SETTING_WYZIE_KEY = 'wyzie_key'
+
 OVERRIDES_FILE = os.path.join(PROFILE_PATH, 'overrides.json')
 
 TOP_MOVIES_URL = "https://cinemeta-catalogs.strem.io/top/catalog/{media_type}/top"
@@ -67,6 +71,7 @@ _YEAR = re.compile(r'\b(19|20)\d{2}\b')
 _BRACKETS = re.compile(r'\[.*?\]|\((?!\d{4}\))[^)]*\)')
 _DOTS_DASHES = re.compile(r'[._]+')
 _MULTI_SPACE = re.compile(r'\s{2,}')
+_MISSING_PROVIDER_SETTING_NOTIFIED = set()
 
 
 class Account(TypedDict):
@@ -91,6 +96,37 @@ def log(msg, level=xbmc.LOGINFO):
 
 def build_url(params):
     return '{}?{}'.format(BASE_URL, urlencode(params))
+
+
+def get_required_setting(setting_id, display_name, notify=True):
+    value = ADDON.getSettingString(setting_id).strip()
+    if value:
+        return value
+
+    log('{} is not set'.format(setting_id), xbmc.LOGWARNING)
+
+    if notify and setting_id not in _MISSING_PROVIDER_SETTING_NOTIFIED:
+        xbmcgui.Dialog().notification(
+            APP_NAME,
+            '{} is not configured. Set it in Management > Configure provider keys.'.format(display_name),
+            xbmcgui.NOTIFICATION_WARNING,
+            4500,
+        )
+        _MISSING_PROVIDER_SETTING_NOTIFIED.add(setting_id)
+
+    return ''
+
+
+def get_aiostreams_url(notify=True):
+    return get_required_setting(PROVIDER_SETTING_AIOSTREAMS_URL, 'AIOStreams URL', notify=notify)
+
+
+def get_tmdb_key(notify=True):
+    return get_required_setting(PROVIDER_SETTING_TMDB_KEY, 'TMDB key', notify=notify)
+
+
+def get_wyzie_key(notify=True):
+    return get_required_setting(PROVIDER_SETTING_WYZIE_KEY, 'Wyzie key', notify=notify)
 
 
 def get_params():
@@ -173,7 +209,7 @@ def search_streams(media_type, imdb_id):
     if not imdb_id:
         return []
 
-    aiostreams_url = ADDON.getSettingString('aiostreams_url').strip()
+    aiostreams_url = get_aiostreams_url(notify=True)
     if not aiostreams_url:
         log('search_streams: aiostreams_url is empty', xbmc.LOGWARNING)
         return []

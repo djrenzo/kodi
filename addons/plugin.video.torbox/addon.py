@@ -37,7 +37,7 @@ from torbox_common import (
 from torbox_library import export_library, export_library_item
 from torbox_setup import add_account, configure_providers
 from torbox_subtitles import add_subtitles, find_local_subtitles, search_subs_imdb_id
-from torbox_tmdb import get_external_id_from_tmdb, search_tmdb_movies, search_tmdb_tvshows
+from torbox_tmdb import get_external_id_from_tmdb, get_tmbd_seasons, search_tmdb_movies, search_tmdb_tvshows
 from torbox_text import (
     CONTEXT_ADD_SUBTITLES,
     CONTEXT_EXPORT_SINGLE_ITEM,
@@ -475,6 +475,7 @@ def top_series(skip):
             year = result.get('year')
             year_text = ' ({})'.format(year) if year else ''
             imdb_id = result.get('imdb_id', '')
+            tmdb_id = result.get('moviedb_id', '')
 
             li = xbmcgui.ListItem(
                 label='{}{}'.format(title, year_text),
@@ -498,6 +499,7 @@ def top_series(skip):
                     {
                         'action': 'list_seasons',
                         'imdb_id': imdb_id,
+                        'tmdb_id': tmdb_id,
                         'title': title,
                     }
                 ),
@@ -526,9 +528,13 @@ def list_seasons(imdb_id, tmdb_id, title):
 
     if not imdb_id and tmdb_id: # for now only comes from search series
         imdb_id = get_external_id_from_tmdb(tmdb_id, media_type='series', external_source='imdb_id')
+
+    seasons_art = {}
+    if tmdb_id:
+        seasons_art = get_tmbd_seasons(tmdb_id)
         
     seasons_list = get_seasons_list(imdb_id)
-    poster = f'https://images.metahub.space/poster/big/{imdb_id}/img'
+    poster_fallback = f'https://images.metahub.space/poster/big/{imdb_id}/img'
 
     for season in seasons_list:
         title = f'Season {season}'
@@ -536,7 +542,12 @@ def list_seasons(imdb_id, tmdb_id, title):
             label='{}'.format(title),
             label2='IMDB {}'.format(imdb_id) if imdb_id else '',
         )
-        li.setArt({'icon': poster, 'thumb': poster, 'poster': poster})
+        s_art = seasons_art.get(str(season))
+        if s_art:
+            poster_url = f'https://image.tmdb.org/t/p/w500/{s_art}'
+            li.setArt({'icon': poster_url, 'thumb': poster_url, 'poster': poster_url})
+        else:
+            li.setArt({'icon': poster_fallback, 'thumb': poster_fallback, 'poster': poster_fallback})
         li.setInfo(
             'video',
             {

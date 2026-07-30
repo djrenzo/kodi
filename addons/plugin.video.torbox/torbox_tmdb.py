@@ -1,3 +1,4 @@
+import html
 import re
 from html import unescape
 from typing import Iterable
@@ -6,8 +7,9 @@ from urllib.request import Request, urlopen
 
 import xbmc
 
-from torbox_common import ADDON, log
-from torbox_http import fetch_json
+from torbox_common import get_tmdb_key, log
+from torbox_http import fetch_json, http_req
+from torbox_sparql import get_ids_from_tmdb
 
 TMDB_API = "https://api.themoviedb.org/3/{media_type}/{tmdb_id}/external_ids"
 IMDB_API = "https://v3-cinemeta.strem.io/meta/{media_type}/{imdb_id}.json"
@@ -32,10 +34,6 @@ def _clean_html_text(value):
     text = _TAG_RE.sub(' ', value or '')
     text = unescape(text)
     return _SPACE_RE.sub(' ', text).strip()
-
-
-def _get_tmdb_key():
-    return ADDON.getSettingString('tmdb_key').strip()
 
 
 def _search_tmdb(title, year=None, limit=TMDB_RESULT_LIMIT, search_url=TMDB_SEARCH_MOVIE_URL, media_type='movie'):
@@ -157,6 +155,32 @@ def search_imdb_movies(title, year=None, limit=IMDB_RESULT_LIMIT):
 def search_imdb_tvshows(title, year=None, limit=IMDB_RESULT_LIMIT):
     return _search_imdb(title, year=year, limit=limit, search_url=IMDB_SEARCH_API, media_type='series')
 
+def parse_tmdb_season(season_match):
+    r = re.findall(r'<a href="([^"]+)">.*?<img[^>]*\ssrc="([^"]+)"', season_match, re.DOTALL)
+    if r:
+        season, url = tuple(*r)
+        return season.split("/")[-1], url.split("/")[-1]
+    return (None, None)
+
+def get_tmbd_seasons(tmdb_id):
+    url = "https://www.themoviedb.org/tv/{tmdb_id}/seasons".format(tmdb_id=tmdb_id)
+    r = http_req(url)
+    if not r:
+        log('Failed to fetch TMDB seasons for ID: {}'.format(tmdb_id), xbmc.LOGWARNING)
+        return {}
+    html = r.decode('utf-8', errors='ignore')
+    
+    season_matches = re.findall(r'<div class="season"[^>]*>(.*?)</div>', html, re.DOTALL)
+    if not season_matches:
+        log('No seasons found for TMDB ID: {}'.format(tmdb_id), xbmc.LOGWARNING)
+        return {}
+  
+    seasons = {}
+    for sm in season_matches:
+        parsed_season, parsed_url = parse_tmdb_season(sm)
+        if parsed_season:
+            seasons[parsed_season] = parsed_url
+    return seasons
 
 def get_external_id_from_tmdb(
     tmdb_id,
@@ -196,20 +220,21 @@ def get_external_id_from_tmdb(
         return {} if multi else None
 
     try:
-        tmdb_key = _get_tmdb_key()
-        if not tmdb_key:
-            log('TMDB key is empty; configure providers first', xbmc.LOGWARNING)
-            return {} if multi else None
+        # tmdb_key = get_tmdb_key(notify=True)
+        # if not tmdb_key:
+        #     log('TMDB key is empty; configure providers first', xbmc.LOGWARNING)
+        #     return {} if multi else None
 
-        tmdb_id = str(tmdb_id)
-        url = TMDB_API.format(media_type=media_type, tmdb_id=tmdb_id)
-        data = fetch_json(
-            url,
-            headers={
-                "Accept": "application/json",
-                "Authorization": f"Bearer {tmdb_key}",
-            },
-        )
+        # tmdb_id = str(tmdb_id)
+        # url = TMDB_API.format(media_type=media_type, tmdb_id=tmdb_id)
+        # data = fetch_json(
+        #     url,
+        #     headers={
+        #         "Accept": "application/json",
+        #         "Authorization": f"Bearer {tmdb_key}",
+        #     },
+        # )
+        data = get_ids_from_tmdb(str(tmdb_id), media_type=media_type, timeout=30)
 
         if data is None:
             log('No data returned from TMDB for TMDB ID: {}'.format(tmdb_id), xbmc.LOGWARNING)

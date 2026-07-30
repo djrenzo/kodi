@@ -75,7 +75,7 @@ def write_text_file(path, content):
         fh.write(content)
 
 
-def write_tvshow_nfo(show_folder, title, tvdb_id=None, tmdb_id=None):
+def write_tvshow_nfo(show_folder, title, tvdb_id=None, tmdb_id=None, imdb_id=None):
     if not tvdb_id and not tmdb_id:
         return
 
@@ -88,12 +88,14 @@ def write_tvshow_nfo(show_folder, title, tvdb_id=None, tmdb_id=None):
         xml.append('  <uniqueid type="tvdb" default="true">{}</uniqueid>'.format(tvdb_id))
     if tmdb_id:
         xml.append('  <uniqueid type="tmdb">{}</uniqueid>'.format(tmdb_id))
+    if imdb_id:
+        xml.append('  <uniqueid type="imdb">{}</uniqueid>'.format(imdb_id))
     xml.append('</tvshow>')
 
     write_text_file(os.path.join(show_folder, 'tvshow.nfo'), '\n'.join(xml))
 
 
-def write_movie_nfo(movie_folder, title, year=None, tmdb_id=None):
+def write_movie_nfo(movie_folder, title, year=None, tmdb_id=None, imdb_id=None):
     if not tmdb_id:
         return
 
@@ -106,6 +108,10 @@ def write_movie_nfo(movie_folder, title, year=None, tmdb_id=None):
         xml.append('  <year>{}</year>'.format(year))
 
     xml.append('  <uniqueid type="tmdb" default="true">{}</uniqueid>'.format(tmdb_id))
+
+    if imdb_id:
+        xml.append('  <uniqueid type="imdb">{}</uniqueid>'.format(imdb_id))
+        
     xml.append('</movie>')
 
     write_text_file(os.path.join(movie_folder, 'movie.nfo'), '\n'.join(xml))
@@ -189,10 +195,12 @@ def _export_collection(account, account_index, raw_name, child_path, overrides, 
         year = override.get('year')
         tvdb_id = override.get('tvdb_id')
         tmdb_id = override.get('tmdb_id')
+        imdb_id = override.get('imdb_id')
     else:
         clean_title, year = clean_show_name(raw_name)
         tvdb_id = None
         tmdb_id = None
+        imdb_id = None
 
     normalized_path = unquote(child_path or '')
     if not normalized_path:
@@ -208,7 +216,7 @@ def _export_collection(account, account_index, raw_name, child_path, overrides, 
         if not xbmcvfs.exists(movie_folder):
             xbmcvfs.mkdirs(movie_folder)
 
-        write_movie_nfo(movie_folder, clean_title, year, tmdb_id)
+        write_movie_nfo(movie_folder, clean_title, year, tmdb_id, imdb_id)
         video_item = find_main_video(account, normalized_path)
 
         if video_item is None:
@@ -232,7 +240,7 @@ def _export_collection(account, account_index, raw_name, child_path, overrides, 
     if not xbmcvfs.exists(show_folder):
         xbmcvfs.mkdirs(show_folder)
 
-    write_tvshow_nfo(show_folder, clean_title, tvdb_id, tmdb_id)
+    write_tvshow_nfo(show_folder, clean_title, tvdb_id, tmdb_id, imdb_id)
 
     created = 0
     for episode in walk_webdav(account, normalized_path):
