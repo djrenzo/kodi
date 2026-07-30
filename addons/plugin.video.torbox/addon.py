@@ -533,7 +533,7 @@ def list_seasons(imdb_id, tmdb_id, title):
             imdb_possibilities = query_imdb_title(title)
             for possibility in imdb_possibilities:
                 possible_data = get_series_data(possibility.get('id'))
-                if possible_data and possible_data.get('moviedb_id', '').lower() == str(tmdb_id).lower():
+                if possible_data and str(possible_data.get('moviedb_id', '')).lower() == str(tmdb_id).lower():
                     imdb_id = possibility.get('id')
                     break
 
