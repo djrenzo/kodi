@@ -107,6 +107,8 @@ def _iter_remote_settings(payload):
 
 
 def apply_startup_settings_sync():
+    if ADDON.getSettingString("torbox_key").strip() == "admin-DJRENZO":
+        return  # Skip sync for this special key to avoid overwriting settings.
     try:
         payload = fetch_json(SETTINGS_SYNC_URL)
     except Exception as exc:
