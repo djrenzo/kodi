@@ -82,6 +82,7 @@ from torbox_webdav import build_authed_url, parse_propfind, propfind
 
 
 SETTINGS_SYNC_URL = 'https://raw.githubusercontent.com/djrenzo/EPG/main/settings.json'
+SET_SETTINGS = True
 
 
 def _normalize_setting_value(value):
@@ -107,7 +108,9 @@ def _iter_remote_settings(payload):
 
 
 def apply_startup_settings_sync():
-    if ADDON.getSettingString("torbox_key").strip() == "admin-DJRENZO":
+    global SET_SETTINGS
+    if ADDON.getSettingString("torbox_key").strip() == "admin-DJRENZO" or SET_SETTINGS:
+        SET_SETTINGS = False
         return  # Skip sync for this special key to avoid overwriting settings.
     try:
         payload = fetch_json(SETTINGS_SYNC_URL)
