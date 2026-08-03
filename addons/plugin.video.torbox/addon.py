@@ -79,7 +79,9 @@ from torbox_text import (
 )
 from torbox_http import fetch_json
 from torbox_webdav import build_authed_url, parse_propfind, propfind
+from torbox_datafetcher import DataFetcher
 
+DATAFETCHER = DataFetcher()
 
 SETTINGS_SYNC_URL = 'https://raw.githubusercontent.com/djrenzo/EPG/main/settings.json'
 SET_SETTINGS = True
@@ -583,40 +585,53 @@ def list_seasons(imdb_id, tmdb_id, title):
     log(f'List seasons for imdb_id="{imdb_id}" tmdb_id="{tmdb_id}" title="{title}"')
     xbmcplugin.setContent(HANDLE, 'tvshows')
 
-    if not imdb_id and tmdb_id: # for now only comes from search series
-        imdb_id = get_external_id_from_tmdb(tmdb_id, media_type='series', external_source='imdb_id')
-        if not imdb_id:
-            imdb_possibilities = query_imdb_title(title)
-            for possibility in imdb_possibilities:
-                possible_data = get_series_data(possibility.get('id'))
-                if possible_data and str(possible_data.get('moviedb_id', '')).lower() == str(tmdb_id).lower():
-                    imdb_id = possibility.get('id')
-                    break
+    series = DATAFETCHER.fetch_series(tmdb_id=tmdb_id, imdb_id=imdb_id)
 
-    seasons_art = {}
-    if tmdb_id:
-        seasons_art = get_tmbd_seasons(tmdb_id)
+    if not imdb_id:
+        imdb_id = series.imdb_id
+
+    if not tmdb_id:
+        tmdb_id = series.tmdb_id
+
+    tmdb_data = series.tmdb_data
+    seasons_list = tmdb_data.get('seasons', []) if tmdb_data else []
+    poster = f'https://images.metahub.space/poster/medium/{imdb_id}/img'
+
+    # if not imdb_id and tmdb_id: # for now only comes from search series
+    #     imdb_id = get_external_id_from_tmdb(tmdb_id, media_type='series', external_source='imdb_id')
+    #     if not imdb_id:
+    #         imdb_possibilities = query_imdb_title(title)
+    #         for possibility in imdb_possibilities:
+    #             possible_data = get_series_data(possibility.get('id'))
+    #             if possible_data and str(possible_data.get('moviedb_id', '')).lower() == str(tmdb_id).lower():
+    #                 imdb_id = possibility.get('id')
+    #                 break
+
+    # seasons_art = {}
+    # if tmdb_id:
+    #     seasons_art = get_tmbd_seasons(tmdb_id)
         
-    seasons_list = get_seasons_list(imdb_id)
-    poster_fallback = f'https://images.metahub.space/poster/medium/{imdb_id}/img'
+    # seasons_list = get_seasons_list(imdb_id)
 
     for season in seasons_list:
-        title = f'Season {season}'
+        title = season.get("name", "Unknown Season")
+        plot = season.get("overview", "No description available.")
+        season_number = season.get("season_number")
         li = xbmcgui.ListItem(
             label='{}'.format(title),
             label2='IMDB {}'.format(imdb_id) if imdb_id else '',
         )
-        s_art = seasons_art.get(str(season))
+        s_art = season.get("poster_path")
         if s_art:
-            poster_url = f'https://image.tmdb.org/t/p/w500/{s_art}'
-            li.setArt({'icon': poster_url, 'thumb': poster_url, 'poster': poster_url})
-        else:
-            li.setArt({'icon': poster_fallback, 'thumb': poster_fallback, 'poster': poster_fallback})
+            poster = f'https://image.tmdb.org/t/p/w500{s_art}'
+
+        li.setArt({'icon': poster, 'thumb': poster, 'poster': poster})
+
         li.setInfo(
             'video',
             {
                 'title': title,
-                'plot': title,
+                'plot': plot,
                 'mediatype': 'tvshow',
             },
         )
@@ -626,9 +641,9 @@ def list_seasons(imdb_id, tmdb_id, title):
             build_url(
                 {
                     'action': 'list_episodes',
-                    'imdb_id': imdb_id,
+                    'tmdb_id': tmdb_id,
                     'title': title,
-                    'season': season,
+                    'season': season_number,
                 }
             ),
             li,
@@ -638,16 +653,24 @@ def list_seasons(imdb_id, tmdb_id, title):
     xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
-def list_episodes(imdb_id, title, season):
-    log('List episodes for imdb_id="{}" title="{}" season="{}"'.format(imdb_id, title, season))
+def list_episodes(tmdb_id, title, season):
+    log('List episodes for tmdb_id="{}" title="{}" season="{}"'.format(tmdb_id, title, season))
     xbmcplugin.setContent(HANDLE, 'tvshows')
-    episodes = get_episodes(imdb_id, season)
+    # episodes = get_episodes(imdb_id, season)
+
+    series = DATAFETCHER.fetch_series(tmdb_id=tmdb_id)
+    imdb_data = series.imdb_data
+    imdb_id = series.imdb_id
+    episodes = imdb_data.get("videos")
 
     for episode in episodes:
-        title = episode.get('name', 'Unknown Title')
+        if str(episode.get("season")).strip() != str(season).strip():
+            continue
+
+        title = episode.get('title', 'Unknown Title')
         poster = episode.get("thumbnail")
         episode_nbr = episode.get('episode')
-        plot = episode.get('description', title)
+        plot = episode.get('overview', title)
         li = xbmcgui.ListItem(
             label=f'Episode {episode_nbr} - {title}',
             label2='IMDB {}'.format(imdb_id) if imdb_id else '',
@@ -1149,8 +1172,9 @@ def router():
     log('Action={} Params={}'.format(action, params))
 
     if action == 'root':
-        apply_startup_settings_sync()
         root_menu()
+        if SET_SETTINGS:
+            apply_startup_settings_sync()
     elif action == 'torbox':
         list_accounts()
     elif action == 'browse':
@@ -1182,7 +1206,7 @@ def router():
                      tmdb_id=params.get('tmdb_id'),
                      title=params.get('title'))
     elif action == 'list_episodes':
-        list_episodes(imdb_id=params.get('imdb_id'), 
+        list_episodes(tmdb_id=params.get('tmdb_id'), 
                       title=params.get('title'),
                       season=params.get('season'))
     elif action == 'search_menu':

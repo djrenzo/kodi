@@ -6,30 +6,25 @@ class DataFetcher():
 
     def __init__(self, base_url=BASE_URL):
         self.base_url = base_url
+        self.cached_data = {}
 
     def _fetch_data(self, media_type, service, id):
         """Fetch data for the given media type, service, and ID."""
         url = self.base_url.format(media_type=media_type, service=service, id=id)
         return fetch_json(url)
 
-    def fetch_series(self, imdb_id=None, tmdb_id=None):
+    def fetch_series(self, tmdb_id=None, imdb_id=None):
         """Fetch series data for the given service and ID."""
         series = Series()
         if not imdb_id and not tmdb_id:
             return None
 
-        if imdb_id:
-            service = 'imdb'
-            id = imdb_id
-            data = self._fetch_data('tv', service, id)
-            series.add_data(id, data, service)
+        if tmdb_id:
+            tmdb_id = str(tmdb_id).strip()
 
-            tmdb_id = data.get('moviedb_id')
-            if tmdb_id:
-                tmdb_data = self._fetch_data('tv', 'tmdb', tmdb_id)
-                series.add_data(tmdb_id, tmdb_data, 'tmdb')
-
-        elif tmdb_id:
+            if tmdb_id in self.cached_data:
+                return self.cached_data[tmdb_id]
+            
             service = 'tmdb'
             id = tmdb_id
             data = self._fetch_data('tv', service, id)
@@ -39,6 +34,28 @@ class DataFetcher():
             if imdb_id:
                 imdb_data = self._fetch_data('tv', 'imdb', imdb_id)
                 series.add_data(imdb_id, imdb_data, 'imdb')
+
+            self.cached_data[tmdb_id] = series
+
+        elif imdb_id:
+            imdb_id = str(imdb_id).strip()
+
+            for cached_series in self.cached_data.values():
+                if cached_series.imdb_id == imdb_id:
+                    return cached_series
+
+            service = 'imdb'
+            id = imdb_id
+            data = self._fetch_data('tv', service, id)
+            series.add_data(id, data, service)
+
+            tmdb_id = data.get('moviedb_id')
+            if tmdb_id:
+                tmdb_id = str(tmdb_id).strip()
+                tmdb_data = self._fetch_data('tv', 'tmdb', tmdb_id)
+                series.add_data(tmdb_id, tmdb_data, 'tmdb')
+
+                self.cached_data[tmdb_id] = series
 
         else:
             return None
@@ -54,7 +71,7 @@ class Series():
     def add_data(self, id, data, service):
         if service == 'imdb':
             self.imdb_data = data
-            self.imdb_id = str(id)
+            self.imdb_id = str(id).strip()
         elif service == 'tmdb':
             self.tmdb_data = data
-            self.tmdb_id = str(id)
+            self.tmdb_id = str(id).strip()
