@@ -114,32 +114,6 @@ def _search_tmdb(title, year=None, limit=TMDB_RESULT_LIMIT, search_url=TMDB_SEAR
     return results
 
 
-def _search_imdb(title, year=None, limit=IMDB_RESULT_LIMIT, search_url=IMDB_SEARCH_API, media_type='movie'):
-    query = (title or '').strip()
-    if not query:
-        return []
-
-    url = search_url.format(media_type=media_type, query=urlencode(query))
-    log('IMDB search query: {}'.format(url))
-
-    data = fetch_json(url)
-    if not data:
-        return []
-    
-    results = data.get("metas", [])
-
-    if len(results) > limit:
-        results = results[:limit]
-
-    return [{
-                'id': r.get("imdb_id"),
-                'title': r.get("name"),
-                'year': r.get("releaseInfo")[:4] if r.get("releaseInfo") else None,
-                'poster_url': r.get("poster"),
-                'plot': r.get("name"),
-            } for r in results]
-
-
 def search_tmdb_movies(title, year=None, limit=TMDB_RESULT_LIMIT):
     return _search_tmdb(title, year=year, limit=limit, search_url=TMDB_SEARCH_MOVIE_URL, media_type='movie')
 
@@ -147,45 +121,6 @@ def search_tmdb_movies(title, year=None, limit=TMDB_RESULT_LIMIT):
 def search_tmdb_tvshows(title, year=None, limit=TMDB_RESULT_LIMIT):
     return _search_tmdb(title, year=year, limit=limit, search_url=TMDB_SEARCH_TV_URL, media_type='tv')
 
-
-def search_imdb_movies(title, year=None, limit=IMDB_RESULT_LIMIT):
-    return _search_imdb(title, year=year, limit=limit, search_url=IMDB_SEARCH_API, media_type='movie')
-
-
-def search_imdb_tvshows(title, year=None, limit=IMDB_RESULT_LIMIT):
-    return _search_imdb(title, year=year, limit=limit, search_url=IMDB_SEARCH_API, media_type='series')
-
-def parse_tmdb_season(season_match):
-    r = re.findall(r'<a href="([^"]+)">.*?<img[^>]*\ssrc="([^"]+)"', season_match, re.DOTALL)
-    if r:
-        season, url = tuple(*r)
-        return season.split("/")[-1], url.split("/")[-1]
-    return (None, None)
-
-def query_imdb_title(title):
-    query = f"https://v3.sg.media-imdb.com/suggestion/x/{title}.json?includeVideos=1"
-    data = fetch_json(query).get("d")
-    return data
-
-def get_tmbd_seasons(tmdb_id):
-    url = "https://www.themoviedb.org/tv/{tmdb_id}/seasons".format(tmdb_id=tmdb_id)
-    r = http_req(url)
-    if not r:
-        log('Failed to fetch TMDB seasons for ID: {}'.format(tmdb_id), xbmc.LOGWARNING)
-        return {}
-    html = r.decode('utf-8', errors='ignore')
-    
-    season_matches = re.findall(r'<div class="season"[^>]*>(.*?)</div>', html, re.DOTALL)
-    if not season_matches:
-        log('No seasons found for TMDB ID: {}'.format(tmdb_id), xbmc.LOGWARNING)
-        return {}
-  
-    seasons = {}
-    for sm in season_matches:
-        parsed_season, parsed_url = parse_tmdb_season(sm)
-        if parsed_season:
-            seasons[parsed_season] = parsed_url
-    return seasons
 
 def get_external_id_from_tmdb(
     tmdb_id,

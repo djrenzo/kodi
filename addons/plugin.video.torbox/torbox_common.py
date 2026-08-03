@@ -162,46 +162,6 @@ def get_top_catalog(skip: int, media_type):
     return []
 
 
-def get_series_data(imdb_id):
-    from torbox_http import fetch_json
-    imdb_id = (str(imdb_id) or '').strip()
-
-    url = SERIES_URL.format(imdb_id=imdb_id)
-    data = fetch_json(url)
-
-    if data:
-        return data.get('meta', [])
-    
-    return []
-
-
-def get_seasons_data(imdb_id):
-    data = get_series_data(imdb_id)
-
-    if data:
-        return data.get('videos', [])
-    
-    return []
-
-
-def get_seasons_list(imdb_id):
-    data = get_seasons_data(imdb_id)
-
-    if data:
-        return sorted(list(set([e.get('season') for e in data])))
-    
-    return []
-
-
-def get_episodes(imdb_id, season):
-    data = get_seasons_data(imdb_id)
-
-    if data:
-        return [e for e in data if str(e.get('season')) == str(season)]
-    
-    return []
-
-
 def search_streams(media_type, imdb_id):
     from torbox_http import fetch_json
     
