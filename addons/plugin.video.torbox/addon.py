@@ -592,8 +592,7 @@ def list_seasons(imdb_id, tmdb_id, title):
 
     tmdb_data = series.tmdb_data
     backdrop = tmdb_data.get('backdrop_path')
-    if backdrop:
-        xbmcplugin.setPluginFanart(HANDLE, image=f"https://image.tmdb.org/t/p/w1280{backdrop}")
+    backdrop_url = f'https://image.tmdb.org/t/p/w1280{backdrop}' if backdrop else None
 
     seasons_list = tmdb_data.get('seasons', []) if tmdb_data else []
 
@@ -611,7 +610,10 @@ def list_seasons(imdb_id, tmdb_id, title):
         else:
             poster = f'https://images.metahub.space/poster/medium/{imdb_id}/img'
 
-        li.setArt({'icon': poster, 'thumb': poster, 'poster': poster})
+        if backdrop_url:
+            li.setArt({'icon': poster, 'thumb': poster, 'poster': poster, 'fanart': backdrop_url})
+        else:
+            li.setArt({'icon': poster, 'thumb': poster, 'poster': poster})
 
         li.setInfo(
             'video',
