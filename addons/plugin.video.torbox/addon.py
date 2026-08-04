@@ -539,7 +539,8 @@ def top_series(skip):
             )
             if imdb_id:
                 poster = f'https://images.metahub.space/poster/medium/{imdb_id}/img'
-                li.setArt({'icon': poster, 'thumb': poster, 'poster': poster})
+                backdrop = f'https://images.metahub.space/background/medium/{imdb_id}/img'
+                li.setArt({'icon': poster, 'thumb': poster, 'poster': poster, 'fanart': backdrop})
             li.setInfo(
                 'video',
                 {
@@ -649,6 +650,7 @@ def list_episodes(tmdb_id, title, season):
     series = DATAFETCHER.fetch_series(tmdb_id=tmdb_id)
     imdb_data = series.imdb_data
     imdb_id = series.imdb_id
+    backdrop = f'https://images.metahub.space/background/medium/{imdb_id}/img' if imdb_id else None
     episodes = imdb_data.get("videos")
 
     for episode in episodes:
@@ -663,8 +665,10 @@ def list_episodes(tmdb_id, title, season):
             label=f'Episode {episode_nbr} - {title}',
             label2='IMDB {}'.format(imdb_id) if imdb_id else '',
         )
-        
-        li.setArt({'icon': poster, 'thumb': poster, 'poster': poster})
+        if backdrop:
+            li.setArt({'icon': poster, 'thumb': poster, 'poster': poster, 'fanart': backdrop})
+        else:
+            li.setArt({'icon': poster, 'thumb': poster, 'poster': poster})
         li.setInfo(
             'video',
             {
