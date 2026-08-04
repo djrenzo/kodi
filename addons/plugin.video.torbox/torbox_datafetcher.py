@@ -7,14 +7,21 @@ import xbmcvfs
 from torbox_http import fetch_json
 from torbox_common import PROFILE_PATH, log
 
-BASE_URL = "https://raw.githubusercontent.com/djrenzo/metadata/main/{media_type}/{service}/{id}.json"
+TMDB_BASE_URL = "https://api.themoviedb.org/3/{media_type}/{id}?append_to_response=external_ids&api_key=effc766d4c2565abd1e93fb7f5f7c628"
+IMDB_BASE_URL = "https://v3-cinemeta.strem.io/meta/{media_type}/{id}.json"
+SERVICE_BASE_URLS = {
+    'tmdb': TMDB_BASE_URL,
+    'imdb': IMDB_BASE_URL,
+}
 CACHE_FILE = os.path.join(PROFILE_PATH, 'datafetcher_cache.json')
 CACHE_TTL_SECONDS = 12 * 60 * 60
 
 class DataFetcher():
 
-    def __init__(self, base_url=BASE_URL):
-        self.base_url = base_url
+    def __init__(self, service_base_urls=None):
+        self.service_base_urls = dict(SERVICE_BASE_URLS)
+        if isinstance(service_base_urls, dict):
+            self.service_base_urls.update(service_base_urls)
         self.cached_by_tmdb = {}
         self.cached_by_imdb = {}
         self._disk_cache = self._load_disk_cache()
@@ -52,6 +59,20 @@ class DataFetcher():
         if imdb_id:
             return 'imdb:{}'.format(str(imdb_id).strip())
         return None
+
+    def _normalize_imdb_payload(self, payload):
+        if not isinstance(payload, dict):
+            return payload
+
+        meta = payload.get('meta')
+        if isinstance(meta, dict):
+            return meta
+        if isinstance(meta, list):
+            for item in meta:
+                if isinstance(item, dict):
+                    return item
+
+        return payload
 
     def _is_fresh(self, payload):
         ts = payload.get('ts', 0) if isinstance(payload, dict) else 0
@@ -155,10 +176,22 @@ class DataFetcher():
 
         return None
 
-    def _fetch_data(self, media_type, service, id):
+    def _fetch_data(self, media_type, service, content_id):
         """Fetch data for the given media type, service, and ID."""
-        url = self.base_url.format(media_type=media_type, service=service, id=id)
-        return fetch_json(url)
+        service = str(service or '').strip().lower()
+        base_url = self.service_base_urls.get(service)
+        if not base_url:
+            log('DataFetcher unsupported service: {}'.format(service))
+            return None
+
+        if service == 'imdb' and media_type == 'tv':
+            media_type = 'series'
+
+        url = base_url.format(media_type=media_type, id=content_id)
+        data = fetch_json(url)
+        if service == 'imdb':
+            return self._normalize_imdb_payload(data)
+        return data
 
     def fetch_series(self, tmdb_id=None, imdb_id=None):
         """Fetch series data for the given service and ID."""
@@ -173,11 +206,11 @@ class DataFetcher():
 
             series = Series()
             service = 'tmdb'
-            id = tmdb_id
-            data = self._fetch_data('tv', service, id)
+            content_id = tmdb_id
+            data = self._fetch_data('tv', service, content_id)
             if not isinstance(data, dict):
                 return None
-            series.add_data(id, data, service)
+            series.add_data(content_id, data, service)
 
             imdb_id = data.get("external_ids", {}).get('imdb_id')
             if imdb_id:
@@ -195,11 +228,11 @@ class DataFetcher():
 
             series = Series()
             service = 'imdb'
-            id = imdb_id
-            data = self._fetch_data('tv', service, id)
+            content_id = imdb_id
+            data = self._fetch_data('tv', service, content_id)
             if not isinstance(data, dict):
                 return None
-            series.add_data(id, data, service)
+            series.add_data(content_id, data, service)
 
             tmdb_id = data.get('moviedb_id')
             if tmdb_id:
