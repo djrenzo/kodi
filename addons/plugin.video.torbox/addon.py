@@ -655,7 +655,7 @@ def list_episodes(tmdb_id, title, season):
         if str(episode.get("season")).strip() != str(season).strip():
             continue
 
-        title = episode.get('title', 'Unknown Title')
+        title = episode.get('name', 'Unknown Title')
         poster = episode.get("thumbnail")
         episode_nbr = episode.get('episode')
         plot = episode.get('overview', title)
