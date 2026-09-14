@@ -388,3 +388,353 @@ here).
   the feature/section legitimately doesn't exist for this item" (e.g. `itemsConnection`
   can be `null` for empty collections). Mirror that defensively in Swift with optional
   chaining rather than force-unwraps.
+
+---
+
+## 11. Full navigation menu map
+
+This is every entry in the addon's root menu (`main_list` in `default.py`), what
+handler it routes to, and which underlying system (§4 GraphQL vs §5 bitban proxy)
+backs it. Use this as the top-level tab/section list for the app.
+
+| Menu label | Handler | Backing system | Notes |
+|---|---|---|---|
+| Buscar (search) | `busca_mitele` | GraphQL search (§4) | Free-text search box → same "program card" results as Programas |
+| Mediaset en directo | `canales_pre` | Hardcoded + EPG JSON | Curated shortlist (Telecinco, Cuatro, La1, La2) + link into full channel list |
+| → Todos los canales | `canales` | HTML scrape (§5) | Full live-channel list, scraped from the `mediasetinfinity.es` homepage |
+| Programas | `programas_mitele` | GraphQL listing (§4, §12) | Top-level ref_id `22Z26bWQ2cEi3sNWOb2Ke8` |
+| Series | `serie_mitele` | bitban `automaticIndex` (§5, §13) | Legacy scraped A–Z catalog of `mitele.es/series-online/` |
+| Miniseries | `miniserie_mitele` | bitban `automaticIndex` (§5, §15) | Legacy scraped catalog of `mitele.es/miniseries/` |
+| Telenovelas | `programas_mitele` | GraphQL listing (§4, §12) | Same handler as Programas, different top-level ref_id `2mZkbC1O13uZh7qb0E7mEp` |
+| Universo MTMAD | `programas_mitele` | GraphQL listing (§4, §12) | Same handler as Programas, different top-level ref_id `2TNd0h39AaNNnScls1juiJ` |
+| Documentales | `peliculas_mitele` | bitban `automaticIndex` (§5, §16) | Flat single-video catalog; this is the pattern to reuse for a real "Películas" tab (see §16) |
+| Música | `menu_musica_mitele` → `musica_mitele_temporadas` | bitban `related`/`tabs` (§5) | Two hardcoded sub-catalogs ("Puro Cuatro", "Mira mi música"); same flat direct-play shape as §16 |
+
+**Important structural insight**: "Programas", "Telenovelas" and "Universo MTMAD" are
+not three different code paths — they are the *same* handler (`programas_mitele`)
+called with three different opaque GraphQL collection ids. Likewise, once you're past
+the top-level catalog listing, **Programas and Series converge onto the exact same
+season → collection → episode pipeline** (§14) — the only real difference between
+those two categories is *how the initial "list of shows" is fetched* (§12 vs §13).
+
+To discover more top-level ref_ids (e.g. a real "Películas" or "Novelas" GraphQL
+collection, if one exists) you would need to capture network traffic from the real
+Mitele/Mediaset Infinity website or app and look for the same
+`744a87fb36dd66f089b2eb301bf12240fed77ba4d400fba3065fb8d6ff8535da` persisted query
+being called with a different `id` variable — this addon does not derive them
+programmatically, they're hardcoded constants captured by hand.
+
+---
+
+## 12. Category deep-dive: Programas (and Telenovelas / Universo MTMAD)
+
+**Entry point**: `programas_mitele(params)`. Params passed in from the menu item:
+`url` = the top-level GraphQL ref_id (`code`), `page` = cursor (starts `"0"`/`""`),
+`extra` = human-readable page counter (starts `"1"`).
+
+**Step 1 — fetch the catalog page** (§4 GraphQL listing query, hash
+`744a87fb...8535da`):
+```
+query_programs(code=ref_id, after=page, limit=10)
+→ variables: {id: ref_id, after: page, first: 10, pagetype: "listing", context: <fixed>}
+→ response:  data.result1.itemsConnection.items[]     (the "program cards")
+             data.result1.itemsConnection.pageInfo     ({hasNextPage, endCursor})
+```
+`after`/`page` is a GraphQL cursor, not a page number — treat it as an opaque string
+you got from the previous page's `pageInfo.endCursor` and pass back verbatim. `"0"`
+and `""` both mean "first page".
+
+**Step 2 — map each card to a "show" list item**:
+
+| GraphQL field | Meaning | iOS model field |
+|---|---|---|
+| `cardLink.referenceId` | opaque show id — becomes the `ref_id` used to fetch seasons (§14) | `id` |
+| `cardLink.value` | a `mitele.es`/`mediasetinfinity.es` page URL (not used further for programas — seasons are fetched by `referenceId`, not this URL) | `webURL` (optional, informational) |
+| `cardTitle` | show title | `title` |
+| `cardText` | subtitle/short text | `subtitle` |
+| *(derived)* | poster image, built as: `https://img-prod-api2.mediasetplay.mediaset.it/api/images/mse/v5/esp/{referenceId}/image_vertical/500/700?r=` | `posterURL` |
+
+Tapping a show navigates into the shared season pipeline (§14) using
+`ref_id = cardLink.referenceId`.
+
+**Pagination**: cursor-based. While `pageInfo.hasNextPage` is true, fetch the next
+page with `after = pageInfo.endCursor`; for an iOS list this is a standard
+infinite-scroll/cursor pager — no page-number math needed (the human page counter
+Kodi shows ("go to page N") is purely UI decoration in the addon, not something the
+API needs).
+
+This exact same flow (steps 1–2, same persisted query hash) is what backs
+**Telenovelas** (`ref_id = "2mZkbC1O13uZh7qb0E7mEp"`) and **Universo MTMAD**
+(`ref_id = "2TNd0h39AaNNnScls1juiJ"`) — implement it once, parameterized by
+`ref_id` + display title.
+
+---
+
+## 13. Category deep-dive: Series
+
+Series does **not** use the GraphQL catalog query for its top-level listing — it
+scrapes the legacy editorial index (§5) instead, then feeds the result into the same
+season pipeline (§14) that Programas uses.
+
+**Entry point**: `serie_mitele(params)`, `url` = bitban `automaticIndex` proxy URL
+targeting `www.mitele.es/series-online/`, `plot` = page number (string, starts `"1"`).
+
+**Step 1 — fetch the catalog page** (§5 legacy bitban `automaticIndex`):
+```
+get_editorial_index(url_base, page=plot, size=100)
+→ GET {url_base}{page}&id=a-z&size=100   (proxied through mab.mediaset.es)
+→ response: { "editorialObjects": [...], "pagination": {"actualPage": N, "totalPages": M} }
+```
+This is a **page-number** paginator (not cursor-based like §12) — `actualPage < totalPages`
+means there's more; fetch `page = actualPage + 1`.
+
+**Step 2 — map each editorial object to a "show" list item**:
+
+| bitban field | Meaning | iOS model field |
+|---|---|---|
+| `id` | legacy numeric-ish id — **must be normalized** before use (see below) | used to derive `id` |
+| `title` | show title | `title` |
+| `image.src` | poster image URL, used as-is (no formula, unlike §12) | `posterURL` |
+| `image.href` | relative path; full URL = `"https://www.mediasetinfinity.es" + href` | `webURL` (not used further downstream) |
+
+**ID normalization** (`normalize_series_ref_id`, in `queries.py`) — the raw `id` from
+this legacy endpoint is not yet a valid GraphQL `ref_id`; it needs a zero-padded `MS`
+prefix to match the id shape the series-page GraphQL query expects:
+```
+len(raw_id) == 6  →  "MS000000" + raw_id
+len(raw_id) == 7  →  "MS00000"  + raw_id
+otherwise         →  raw_id unchanged
+```
+Apply this once per item; the result is the `ref_id` you pass into §14.
+
+Tapping a show navigates into the shared season pipeline (§14) using this normalized
+`ref_id` — **at that point Series and Programas are indistinguishable**; both end up
+calling `query_series_page` with a `ref_id` that GraphQL accepts.
+
+---
+
+## 14. Shared pipeline: Season → Collection → Episode
+
+Both **Programas** (§12) and **Series** (§13) hand off to this exact same three-step
+chain once you have a show's `ref_id`. This is the GraphQL "series page" persisted
+query (hash `0cda6aecb...6b9eb4`, `operationName: MPlaySeriesPage`) called twice with
+different intent, plus one listing-query call:
+
+### 14.1 Seasons — `serie_mitele_temporadas(params)`
+
+```
+query_seasons(ref_id)
+→ GET series-page query with variables {id: ref_id, metadataTemplateName: "series-metadata-prod", templateName: "series-page-prod"}
+→ response: data.getSeriesPage.dataSource.seasons[]
+```
+
+| Field | Meaning | iOS model field |
+|---|---|---|
+| `seasonTitle` | e.g. "Temporada 1" | `title` |
+| `cardLink.referenceId` | season id → becomes `ref_id` for §14.2 | `id` |
+| `cardLink.value` | not used further | — |
+
+No pagination — all seasons for a show come back in one response. Note the show's
+poster (`thumbnail`, carried over from §12/§13) is reused for every season/collection
+row rather than fetched again — there's no per-season artwork in this API.
+
+### 14.2 Collections — `show_collections(params)`
+
+A "season" on Mitele can be split into sub-groupings ("collections" — e.g. by
+storyline arc or reissue) before you get to actual episodes. Same GraphQL series-page
+query, called again with the **season's** `ref_id` this time:
+
+```
+query_collections(season_id, area=1)
+→ same series-page query, variables {id: season_id, ...}
+→ response: data.getSeriesPage.areaContainersConnection.areaContainers[N]
+              .areas[0].sections[0].collections[]
+```
+
+`N` (area container index) is **not fixed** — different seasons' pages put the real
+collections list at a different area index, and some indices are decorative/empty.
+The addon scans `area = 1, 2, 3, ...` and picks the first one whose first collection
+has a non-empty `title`, recursing (`query_collections(season_id, area=area+1)`) until
+it finds one. **Port this scan, don't hardcode an index** — it will silently return
+the wrong (empty) section otherwise. Guard against infinite recursion (cap at, say,
+6 attempts) in case a season genuinely has no collections.
+
+| Field | Meaning | iOS model field |
+|---|---|---|
+| `title` | collection name (often just "Episodios") | `title` |
+| `id` | collection id → becomes the `ref_id` for §14.3 | `id` |
+
+Most seasons will have exactly one collection ("Episodios") — don't assume that and
+skip straight to episodes though; some shows genuinely have multiple.
+
+### 14.3 Episodes — `show_episodes(params)`
+
+Back to the **listing** persisted query (same one used for §12's catalog page, hash
+`744a87fb...8535da`), now with the collection's id as `ref_id`:
+
+```
+query_episodes(collection_id, after=page, limit=10)
+→ same shape as query_programs (§12) — itemsConnection.items[] / pageInfo
+```
+
+| GraphQL field | Meaning | iOS model field |
+|---|---|---|
+| `cardLink.referenceId` | episode id | `id` |
+| `cardLink.value` | episode **page URL** — this is the input to stream resolution (§6), not a media URL | `playbackSourceURL` |
+| `cardTitle` | episode title | `title` |
+| `description` (fallback `cardText`) | synopsis | `overview` |
+| `cardImages[0].id` + `cardImages[0].r` | episode still, URL = `https://img-prod-api2.mediasetplay.mediaset.it/api/images/mp/v5/esp/{id}/image_keyframe_poster/360/203?r={r}` | `thumbnailURL` |
+| `lastPublishDate` (first 10 chars) | air date, `YYYY-MM-DD` | `airDate` |
+| `duration` | seconds | `durationSeconds` |
+| `durationString` | pre-formatted duration (e.g. `"20:34"`) | display-only |
+| `cardEditorialMetadata` | freeform editorial text (often air-context) | secondary metadata line |
+| `cardEditorialMetadataRating` | age rating (e.g. `"12"`, `"16"`) | `maturityRating` |
+
+Same cursor pagination as §12 (`pageInfo.hasNextPage` / `endCursor`).
+
+Tapping an episode calls the VOD stream-resolution pipeline (§6) with
+`programme URL = cardLink.value`.
+
+---
+
+## 15. Category deep-dive: Miniseries
+
+Miniseries is entirely on the legacy bitban system (§5) — no GraphQL involved at all.
+It also has a different internal shape: a flat "tabs" tree instead of
+season/collection/episode GraphQL objects, and text-regex-based pagination.
+
+### 15.1 Catalog — `miniserie_mitele(params)`
+
+```
+get_editorial_index(fixed url → mitele.es/miniseries/, page="1", size=24)
+→ same shape as §13 step 1: { "editorialObjects": [...], "pagination": {...} }
+```
+
+| Field | Meaning | iOS model field |
+|---|---|---|
+| `id` | used to build the **tab id** for step 2: `tag = id + ".0"` | keep raw `id`, derive `tag` when needed |
+| `title` | miniseries title | `title` |
+| `image.src` | poster | `posterURL` |
+| `image.href` | relative path → `"https://www.mitele.es" + href` | `webURL` (page url, carried forward as `url` into step 2, though step 2 only actually needs `tag`) |
+
+**⚠️ Known gap in this addon**: this call is always `page="1", size=24` and the
+`pagination` field in the response is **never read/used** here (unlike §13, §16 which
+do respect it). If the real miniseries catalog has more than 24 entries, everything
+past the first page is silently unreachable in this addon. When porting, prefer
+reading `pagination.actualPage/totalPages` here too and paginating properly — there's
+no technical reason not to, the addon's author just didn't wire it up for this one
+catalog screen.
+
+### 15.2 Episodes ("tabs") — `miniserie_mitele_server(params)`
+
+```
+get_tab_contents(url_base, tag, page)
+→ GET {BITBAN_BASE}/tabs/mtweb?url={url_base}&tabId={tag}&page={page}&size=50
+→ response JSON: { "contents": [ node, node, ... ], ... }
+```
+
+Each `node` in `contents` is **either**:
+- a **grouping node** (has a non-empty `children[]` array) — e.g. a season header
+  wrapping its episodes. Iterate `children` and treat each child as an episode node.
+- a **leaf node** with no `children` — usually itself an episode, **except** when its
+  `title` matches the regex `^Temporada \d+` (a bare "Temporada N" placeholder/header
+  with nothing under it) — skip those, they're not playable.
+
+**Episode node fields** (used by both the grouping-child case and the direct-leaf
+case, via `_add_miniserie_episode`):
+
+| Field | Meaning | iOS model field |
+|---|---|---|
+| `title` | episode title | `title` |
+| `subtitle` | secondary label, shown combined with title in the Kodi UI (`"{subtitle} {title}"`) | `subtitle` |
+| `info.synopsis` | episode synopsis | `overview` |
+| `link.href` | relative path → `"https://www.mitele.es" + href` | `playbackSourceURL` (fed to §6 as the programme URL, same as §14.3) |
+| `images.thumbnail.src` | episode still | `thumbnailURL` |
+
+All string fields in this response have literal backslashes to strip
+(`.replace("\\", "")`) — the bitban proxy appears to double-escape some content; sanitize on ingest.
+
+**Pagination — different mechanism than everywhere else**: this endpoint's page info
+isn't reliably reachable as a clean JSON field, so the addon regex-scans the **raw
+response body text** for the first occurrence of `"actualPage":(\d+),"totalPages":(\d+)`
+(`extract_pagination_from_text`). Do the same (a lightweight regex/string scan) rather
+than trying to locate a `pagination` key in the parsed JSON — it may not be at a
+predictable path in this endpoint's response.
+
+Tapping an episode routes to the same `miniserie_mitele_reproducir` playback handler
+as everything else (§6) — no `extra`/channel flag is set, so it always takes the VOD
+branch.
+
+---
+
+## 16. Category deep-dive: Películas / Documentales (flat single-video catalog)
+
+There is no dedicated "Películas" entry in this addon's menu today — the only wired
+example of this pattern is **Documentales**, via `peliculas_mitele`. The pattern
+itself is generic (a flat catalog where every entry is directly playable, no
+season/episode hierarchy — the natural shape for movies/documentaries as opposed to
+series) and is the one to reuse for a real "Películas" tab, once you've identified the
+right catalog URL (likely `mitele.es/peliculas/`, unverified — not present in this
+addon).
+
+**Entry point**: `peliculas_mitele(params)`, `url` = bitban `automaticIndex` proxy
+URL (for Documentales: targeting `www.mitele.es/documentales/`), `plot` = page number
+(starts `"1"`).
+
+**Step 1 — fetch the catalog page** (identical mechanism to §13 step 1 and §15.1):
+```
+get_editorial_index(url, page=plot, size=24)
+→ { "editorialObjects": [...], "pagination": {"actualPage": N, "totalPages": M} }
+```
+
+**Step 2 — map each object directly to a playable item** (no intermediate
+season/episode navigation — this is the key structural difference from §12–§15):
+
+| Field | Meaning | iOS model field |
+|---|---|---|
+| `title` | title | `title` |
+| `image.src` | poster/thumbnail | `posterURL` / `thumbnailURL` |
+| `image.href` | relative path → `"https://www.mitele.es" + href` — **this becomes the playable item's URL directly** (note: sourced from `image.href`, not a separate `link` field like §15.2 uses) | `playbackSourceURL` |
+
+Every row is immediately playable (`isPlayable = true`); tapping it goes straight
+into the VOD stream-resolution pipeline (§6) with this URL as the programme URL — no
+seasons, no collections, no episode list.
+
+**Pagination**: page-number based, same as §13 (`actualPage < totalPages` → fetch
+`actualPage + 1`).
+
+---
+
+## 17. Cross-category summary table
+
+For quick reference when scaffolding the iOS app's data layer — one row per category,
+showing the full chain from "tap the tab" to "play a video":
+
+| Category | Catalog fetch | Detail chain | Terminal playable entity |
+|---|---|---|---|
+| Programas / Telenovelas / Universo MTMAD | GraphQL listing query, curated top-level `ref_id` (§12) | Seasons → Collections → Episodes, all GraphQL (§14) | Episode card (`cardLink.value` → §6 VOD) |
+| Series | Legacy bitban `automaticIndex` scrape + id normalization (§13) | Same as above once normalized (§14) | Episode card (§6 VOD) |
+| Miniseries | Legacy bitban `automaticIndex` scrape (§15.1, **catalog pagination not implemented in this addon**) | Legacy bitban `tabs` tree, grouping/leaf nodes (§15.2) | Episode node (`link.href` → §6 VOD) |
+| Documentales (→ Películas pattern) | Legacy bitban `automaticIndex` scrape (§16) | None — flat catalog | Catalog item (`image.href` → §6 VOD) |
+| Mediaset en directo | Hardcoded shortlist + EPG JSON, or HTML scrape for the full list (§11) | None | Channel slug → §7 live pipeline |
+
+Everything in the "Terminal playable entity" column funnels into the exact same
+stream-resolution code (§6/§7) — the categories only differ in *how you arrive at a
+programme URL or channel slug*, never in how playback itself is resolved.
+
+---
+
+## 18. Known gaps worth a product decision before porting
+
+- **Miniseries catalog pagination is unimplemented** (§15.1) — only the first 24
+  entries are ever reachable. Fix when porting rather than replicating the bug.
+- **No true "Películas" tab exists** in this addon (§16) — Documentales is the only
+  wired example of the flat-catalog pattern. Confirm whether `mitele.es/peliculas/`
+  (or equivalent) exists as a distinct bitban `automaticIndex` target before assuming
+  parity with the addon.
+- **Live channel list is HTML-scraped** (§5, §11) — fragile; prefer finding a real
+  endpoint via app traffic capture if one exists, otherwise hardcode the known slugs.
+- **`Series` and `Programas` share a handler function** but arrive at it via two
+  different catalog mechanisms with two different pagination styles (cursor vs page
+  number) — don't assume one unified "catalog" abstraction covers both without
+  parameterizing the pager type.
