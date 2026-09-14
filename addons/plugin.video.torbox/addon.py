@@ -1129,7 +1129,7 @@ def view_overrides():
         )
         return
 
-    items = list(overrides.items())
+    items = sorted(overrides.items(), key=lambda pair: pair[0].lower())
     labels = [
         '{} -> {} ({}) [{}]'.format(
             folder_name[:40],

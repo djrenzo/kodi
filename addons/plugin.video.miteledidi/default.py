@@ -41,7 +41,7 @@ img_links = {
 }
 
 def _log(msg):
-    plugintools.log(f"--> mediaset - {msg} <--")
+    plugintools.log(f"--> miteledidi - {msg} <--")
 
 def run():
     _log("Running")

@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <addon
-	id="plugin.video.miteledidi"
-  version="1.4.2"
-  name="[B][COLOR white]mitele[COLOR cornflowerblue] didi[/COLOR][/B]"
+	id="plugin.video.mediaset"
+  version="1.0.0"
+  name="Mediaset"
   provider-name="equipo tvdidi">
 
   <requires>
@@ -15,9 +15,9 @@
 	
 	<extension point="xbmc.addon.metadata">
     <platform>all</platform>
-		<summary lang="en">miteledidi</summary>
-		<summary lang="da">miteledidi</summary>
-		<description lang="en">[B][LOWERCASE][CAPITALIZE][COLOR white]For watching Mediaset[/COLOR][/CAPITALIZE][/LOWERCASE][/B]</description>
+		<summary lang="en">mediaset</summary>
+		<summary lang="da">mediaset</summary>
+		<description lang="en">Mediaset addon for Kodi</description>
     <disclaimer>[B][COLOR yellow]Made so my loml can watch la isla with me in the bed[/B][/COLOR]</disclaimer>
 		<website></website>
 		<license>GPL 2.0</license>

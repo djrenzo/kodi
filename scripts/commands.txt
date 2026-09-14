@@ -1,4 +1,4 @@
-rm plugin.video.miteledidi.zip && zip -r plugin.video.miteledidi.zip plugin.video.miteledidi && cp plugin.video.miteledidi.zip /media/didier/TOSHIBA\ EXT/plugin.video.miteledidi.zip
+rm plugin.video.mediaset.zip && zip -r plugin.video.mediaset.zip plugin.video.mediaset && cp plugin.video.mediaset.zip /media/didier/TOSHIBA\ EXT/plugin.video.mediaset.zip
 
 cat /sdcard/Android/data/org.xbmc.kodi/files/.kodi/temp/kodi.log
 

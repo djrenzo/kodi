@@ -158,7 +158,8 @@ def add_subtitles(folder_name, account_index):
                 return
             _notify_saved(dialog, dest_path, target_filename)
             _apply_srt_adjustments(dialog, dest_path)
-        return
+            return
+        # Cancel/back on existing subtitles: fall through and fetch new subtitles to override.
 
     if not tmdb_id:
         dialog.ok(DIALOG_SUBS_ADD_TITLE.format(APP_NAME), DIALOG_SUBS_NEED_TMDB)
