@@ -303,21 +303,43 @@ def get_musica_items(url):
     return requests.get(url, headers=HEADERS_SCRAPE).json()
 
 def get_channel_cards():
-    """Scrape mediasetinfinity.es homepage for live channel cards (image, title, slug)."""
-    page = requests.get('https://www.mediasetinfinity.es/', headers=HEADERS_SCRAPE).text
-    matches = re.findall(
-        r'src="(https://img-prod-api2\.mediasetplay\.mediaset\.it/api/images/[^"]*)".*?'
-        r'text-headline-7[^>]*>([^<]*)</span>.*?'
-        r'href="/directo/([a-z0-9-]+)/"',
-        page, re.S
-    )
-    excluded_slugs = ("acontraplus", "fight-sports")
+    """Scrape mediasetinfinity.es homepage for live channel cards (image, title, slug).
 
-    return [
-        {"image": foto, "title": html.unescape(titulo), "slug": canal}
-        for foto, titulo, canal in matches
-        if canal not in excluded_slugs
-    ]
+    The homepage is ~14MB of HTML; a single DOTALL regex over the whole page can take
+    minutes (catastrophic backtracking) and hang/crash Kodi on weaker hardware. Instead,
+    locate each channel href cheaply, then look backwards in a small bounded window for
+    its image/title (skipping unrelated hits like footer nav links with no nearby card).
+    """
+    page = requests.get('https://www.mediasetinfinity.es/', headers=HEADERS_SCRAPE).text
+    excluded_slugs = ("acontraplus", "fight-sports")
+    window_size = 4000
+
+    src_re = re.compile(r'src="(https://img-prod-api2\.mediasetplay\.mediaset\.it/api/images/[^"]*)"')
+    title_re = re.compile(r'text-headline-7[^>]*>([^<]*)</span>')
+    href_re = re.compile(r'href="/directo/([a-z0-9-]+)/"')
+
+    cards = []
+    seen_slugs = set()
+
+    for m in href_re.finditer(page):
+        canal = m.group(1)
+        if canal in excluded_slugs or canal in seen_slugs:
+            continue
+
+        window = page[max(0, m.start() - window_size):m.start()]
+        src_matches = list(src_re.finditer(window))
+        title_matches = list(title_re.finditer(window))
+        if not src_matches or not title_matches:
+            continue
+
+        cards.append({
+            "image": src_matches[-1].group(1),
+            "title": html.unescape(title_matches[-1].group(1)),
+            "slug": canal
+        })
+        seen_slugs.add(canal)
+
+    return cards
 
 def query_search(text, first=10):
     """Search Mitele's GraphQL API; returns raw item cards (title, cardLink, cardImages)."""

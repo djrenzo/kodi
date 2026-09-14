@@ -491,6 +491,8 @@ def show_episodes(params):
 
     episodes, pageInfo = query_episodes(collection_id, after=page, limit=10)
 
+    plugintools.set_view(plugintools.MOVIES, 503)
+
     for ep in episodes:
         cardLink = ep.get("cardLink")
         ref_id = cardLink.get("referenceId")
@@ -518,8 +520,6 @@ def show_episodes(params):
             info_labels["Mpaa"] = rating
         if duration_seconds:
             info_labels["Duration"] = duration_seconds
-
-        plugintools.set_view(plugintools.MOVIES,503)
 
         plugintools.add_item(
             action="miniserie_mitele_reproducir" ,
@@ -578,7 +578,6 @@ def _add_miniserie_episode(node):
     link = "https://www.mitele.es" + node.get("link", {}).get("href", "").replace("\\", "")
     thumbnail_url = node.get("images", {}).get("thumbnail", {}).get("src", "").replace("\\", "")
 
-    plugintools.set_view(plugintools.MOVIES, 503)
     plugintools.add_item(
         action="miniserie_mitele_reproducir",
         title=f"[B][COLOR white]{subtitle} [COLOR gold]{title}[/COLOR][/B]",

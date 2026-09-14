@@ -1199,37 +1199,12 @@ def set_view(view_mode, view_code=0):
 
 
 
-    # Reads skin name
-
-    skin_name = xbmc.getSkinDir()
-
-    _log("set_view skin_name='"+skin_name+"'")
-
-
-
-    try:
-
-        if view_code==0:
-
-            _log("set_view view mode is "+view_mode)
-
-            view_codes = ALL_VIEW_CODES.get(view_mode)
-
-            view_code = view_codes.get(skin_name)
-
-            _log("set_view view code for "+view_mode+" in "+skin_name+" is "+str(view_code))
-
-            xbmc.executebuiltin("Container.SetViewMode("+str(view_code)+")")
-
-        else:
-
-            _log("set_view view code forced to "+str(view_code))
-
-            xbmc.executebuiltin("Container.SetViewMode("+str(view_code)+")")
-
-    except:
-
-        _log("Unable to find view code for view mode "+str(view_mode)+" and skin "+skin_name)
+    # Note: we intentionally do NOT call Container.SetViewMode here.
+    # Forcing a view on every directory fights the view the user picked
+    # manually and made Kodi flip between List/Iconwall/etc. on every
+    # navigation. Setting the content type above is enough for the skin
+    # to pick sensible defaults while still letting Kodi remember the
+    # user's own view choice per window/content type.
 
 
 
