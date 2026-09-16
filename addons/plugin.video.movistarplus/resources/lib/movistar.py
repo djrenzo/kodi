@@ -1340,15 +1340,16 @@ class Movistar(object):
       for f in ['access_token.conf', 'account.json', 'device_id.conf', 'devices.json', 'profile_id.conf', 'tokens.json', 'channels2.json', 'channels_UHD.json', 'channels_HD.json', 'epg2.json', 'epg_UHD.json', 'epg_HD.json', 'cdn.conf']:
         self.cache.remove_file(f)
 
-    # Deliberately excludes device_id.conf, access_token.conf and tokens.json:
-    # those are bound to the exporting device (its access_token's JWT claims
-    # embed the specific deviceId), and replaying them on another device's
-    # hardware got "session token is not valid" from Movistar's backend.
-    # auth.key is the closer-to-account-level password-grant token; importing
-    # only that (plus account.json/profile_id.conf) and letting the importing
-    # device register/reuse its own device (see reuse_devices in __init__)
-    # gets it a legitimately-issued session instead of a replayed one.
-    session_files = ['auth.key', 'account.json', 'profile_id.conf']
+    # Includes device_id.conf so both devices register as the exact same
+    # device to Movistar (the point of this export/import feature), but
+    # deliberately excludes access_token.conf and tokens.json - those are a
+    # static snapshot of the exporting device's already-open session, and
+    # replaying that snapshot verbatim on another device's hardware got
+    # "session token is not valid" from Movistar's backend. Sharing the
+    # device_id but leaving tokens.json absent makes the importing device's
+    # __init__ perform its own fresh token exchange (see the "Tokens" section
+    # below) for that same device_id, instead of replaying device A's tokens.
+    session_files = ['auth.key', 'account.json', 'profile_id.conf', 'device_id.conf']
 
     def export_session_data(self):
       data = {}

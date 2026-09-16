@@ -750,24 +750,45 @@ def export_session():
   # ..." unless we close it out, even though this action shows a dialog
   # rather than a listing. close_folder(cacheToDisc=False) after the dialog
   # satisfies that without listing anything.
+  def extract_code(url):
+    code = url.rsplit('/', 1)[-1]
+    if code.lower().endswith('.txt'):
+      code = code[:-len('.txt')]
+    return code
+
   data = m.export_session_data()
   payload = json.dumps({'movistarplus_session': 1, 'files': data}, ensure_ascii=False)
   url = upload_to_litterbox(payload, 'movistarplus_session.txt')
   if url:
-    xbmcgui.Dialog().textviewer(addon.getLocalizedString(30454), url)
+    text = '{}\n\n{}\n\n{}'.format(addon.getLocalizedString(30454), extract_code(url), url)
+    xbmcgui.Dialog().textviewer(addon.getLocalizedString(30461), text)
   else:
     url = upload_to_catbox(payload, 'movistarplus_session.txt')
     if url:
-      xbmcgui.Dialog().textviewer(addon.getLocalizedString(30459), url)
+      text = '{}\n\n{}\n\n{}'.format(addon.getLocalizedString(30459), extract_code(url), url)
+      xbmcgui.Dialog().textviewer(addon.getLocalizedString(30462), text)
     else:
       show_notification(addon.getLocalizedString(30456))
   close_folder(cacheToDisc=False)
 
 def import_session():
-  url = input_window(addon.getLocalizedString(30455))
-  if not url:
+  index = xbmcgui.Dialog().select(
+    addon.getLocalizedString(30460),
+    [addon.getLocalizedString(30461), addon.getLocalizedString(30462)])
+  if index < 0:
     close_folder(cacheToDisc=False)
     return
+  base_url = 'https://litterbox.catbox.moe/' if index == 0 else 'https://files.catbox.moe/'
+
+  code = input_window(addon.getLocalizedString(30455))
+  if not code:
+    close_folder(cacheToDisc=False)
+    return
+  code = code.strip()
+  if code.lower().endswith('.txt'):
+    code = code[:-len('.txt')]
+  url = '{}{}.txt'.format(base_url, code)
+
   try:
     # requests' default User-Agent ("python-requests/x.y.z") is exactly what
     # got the litterbox upload blocked earlier in this same session - the
@@ -780,10 +801,10 @@ def import_session():
     if payload.get('movistarplus_session') != 1 or 'files' not in payload:
       raise ValueError('not a movistarplus session export')
     m.import_session_data(payload['files'])
-    # session_files no longer includes device_id.conf, so this device has
-    # none cached and will register/reuse its own on next use - reuse_devices
-    # makes it reuse an existing registered device instead of burning a new
-    # device-registration slot on the account each time a session is imported.
+    # Harmless belt-and-suspenders: session_files includes device_id.conf so
+    # this normally won't hit the reuse_devices branch at all (the imported
+    # device_id is already there), but this keeps a sane default for other
+    # paths, like a later independent username/password login on this device.
     addon.setSettingBool('reuse_devices', True)
     show_notification(addon.getLocalizedString(30458), xbmcgui.NOTIFICATION_INFO)
   except Exception as e:

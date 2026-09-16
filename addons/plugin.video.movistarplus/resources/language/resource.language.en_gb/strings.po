@@ -623,11 +623,11 @@ msgid "Import session"
 msgstr ""
 
 msgctxt "#30454"
-msgid "Session exported. Enter this URL on the other device's Import session:"
+msgid "Session exported to Litterbox. On the other device's Import session, pick Litterbox and enter this code:"
 msgstr ""
 
 msgctxt "#30455"
-msgid "Enter the session URL"
+msgid "Enter the code"
 msgstr ""
 
 msgctxt "#30456"
@@ -643,5 +643,17 @@ msgid "Session imported. Go back to the main menu to use it."
 msgstr ""
 
 msgctxt "#30459"
-msgid "Session exported (permanent link, delete it once imported). Enter this URL on the other device's Import session:"
+msgid "Session exported to Catbox (permanent link, delete it once imported). On the other device's Import session, pick Catbox and enter this code:"
+msgstr ""
+
+msgctxt "#30460"
+msgid "Where was the session exported to?"
+msgstr ""
+
+msgctxt "#30461"
+msgid "Litterbox"
+msgstr ""
+
+msgctxt "#30462"
+msgid "Catbox"
 msgstr ""

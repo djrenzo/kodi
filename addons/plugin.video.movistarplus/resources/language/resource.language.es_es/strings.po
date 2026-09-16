@@ -586,12 +586,12 @@ msgid "Import session"
 msgstr "Importar sesión"
 
 msgctxt "#30454"
-msgid "Session exported. Enter this URL on the other device's Import session:"
-msgstr "Sesión exportada. Introduce esta URL en Importar sesión del otro dispositivo:"
+msgid "Session exported to Litterbox. On the other device's Import session, pick Litterbox and enter this code:"
+msgstr "Sesión exportada a Litterbox. En Importar sesión del otro dispositivo, elige Litterbox e introduce este código:"
 
 msgctxt "#30455"
-msgid "Enter the session URL"
-msgstr "Introduce la URL de la sesión"
+msgid "Enter the code"
+msgstr "Introduce el código"
 
 msgctxt "#30456"
 msgid "Failed to export session"
@@ -606,8 +606,20 @@ msgid "Session imported. Go back to the main menu to use it."
 msgstr "Sesión importada. Vuelve al menú principal para usarla."
 
 msgctxt "#30459"
-msgid "Session exported (permanent link, delete it once imported). Enter this URL on the other device's Import session:"
-msgstr "Sesión exportada (enlace permanente, bórralo una vez importado). Introduce esta URL en Importar sesión del otro dispositivo:"
+msgid "Session exported to Catbox (permanent link, delete it once imported). On the other device's Import session, pick Catbox and enter this code:"
+msgstr "Sesión exportada a Catbox (enlace permanente, bórralo una vez importado). En Importar sesión del otro dispositivo, elige Catbox e introduce este código:"
+
+msgctxt "#30460"
+msgid "Where was the session exported to?"
+msgstr "¿Dónde se exportó la sesión?"
+
+msgctxt "#30461"
+msgid "Litterbox"
+msgstr "Litterbox"
+
+msgctxt "#30462"
+msgid "Catbox"
+msgstr "Catbox"
 
 #~ msgctxt "#30040"
 #~ msgid "Use only for these languages (e.g.: es en pt):"
