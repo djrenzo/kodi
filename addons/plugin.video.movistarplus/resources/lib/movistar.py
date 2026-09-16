@@ -1340,10 +1340,15 @@ class Movistar(object):
       for f in ['access_token.conf', 'account.json', 'device_id.conf', 'devices.json', 'profile_id.conf', 'tokens.json', 'channels2.json', 'channels_UHD.json', 'channels_HD.json', 'epg2.json', 'epg_UHD.json', 'epg_HD.json', 'cdn.conf']:
         self.cache.remove_file(f)
 
-    # Files that together let another device reuse this exact logged-in
-    # session (device registration + tokens) without a fresh username/password
-    # login; see __init__ for how each one is read back on startup.
-    session_files = ['auth.key', 'access_token.conf', 'account.json', 'device_id.conf', 'profile_id.conf', 'tokens.json']
+    # Deliberately excludes device_id.conf, access_token.conf and tokens.json:
+    # those are bound to the exporting device (its access_token's JWT claims
+    # embed the specific deviceId), and replaying them on another device's
+    # hardware got "session token is not valid" from Movistar's backend.
+    # auth.key is the closer-to-account-level password-grant token; importing
+    # only that (plus account.json/profile_id.conf) and letting the importing
+    # device register/reuse its own device (see reuse_devices in __init__)
+    # gets it a legitimately-issued session instead of a replayed one.
+    session_files = ['auth.key', 'account.json', 'profile_id.conf']
 
     def export_session_data(self):
       data = {}
@@ -1354,6 +1359,11 @@ class Movistar(object):
       return data
 
     def import_session_data(self, data):
+      # Clear this device's own stale device/session state first, so the
+      # imported account-level credentials don't end up mixed with a leftover
+      # device_id/tokens.json from whatever this device was previously used
+      # for, and __init__ registers/reuses a device fresh on next use.
+      self.delete_session_files()
       for f in self.session_files:
         if f in data:
           self.cache.save_file(f, data[f])

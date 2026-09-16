@@ -225,12 +225,18 @@ class RequestHandler(BaseHTTPRequestHandler):
                 LOG('license response: {}'.format(license_data))
                 d = try_load_json(license_data)
                 if d and 'errorCode' in d:
-                  from .gui import show_notification
-                  show_notification('Error {}: {}'.format(d['errorCode'], d['message']))
-                  if d['errorCode'] == 4027:
-                    if not reregister_needed and addon.getSettingBool('reregister'):
-                      reregister_needed = True
-                      continue
+                  # 4027 on the first license request after a Kodi restart is
+                  # routinely self-healed by the re-register-and-retry below -
+                  # only surface a notification when that isn't about to happen
+                  # (a different error, or a 4027 that persists after retrying),
+                  # so a normal auto-recovered hiccup doesn't look like a failure.
+                  will_retry = d['errorCode'] == 4027 and not reregister_needed and addon.getSettingBool('reregister')
+                  if not will_retry:
+                    from .gui import show_notification
+                    show_notification('Error {}: {}'.format(d['errorCode'], d['message']))
+                  if will_retry:
+                    reregister_needed = True
+                    continue
               else:
                 LOG('license response: {}'.format(encode_base64(license_data)))
               break

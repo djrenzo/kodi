@@ -780,6 +780,11 @@ def import_session():
     if payload.get('movistarplus_session') != 1 or 'files' not in payload:
       raise ValueError('not a movistarplus session export')
     m.import_session_data(payload['files'])
+    # session_files no longer includes device_id.conf, so this device has
+    # none cached and will register/reuse its own on next use - reuse_devices
+    # makes it reuse an existing registered device instead of burning a new
+    # device-registration slot on the account each time a session is imported.
+    addon.setSettingBool('reuse_devices', True)
     show_notification(addon.getLocalizedString(30458), xbmcgui.NOTIFICATION_INFO)
   except Exception as e:
     LOG('import_session failed: {}'.format(e))
@@ -846,7 +851,7 @@ def create_iptv_settings():
   show_notification(addon.getLocalizedString(30319), xbmcgui.NOTIFICATION_INFO)
   output_file = 'instance-settings-91.xml' if kodi_version > 19 else 'settings.xml'
   epg_url = None
-  if False: #addon.getSettingBool('use_external_epg'):
+  if addon.getSettingBool('use_external_epg'):
     epg_url = addon.getSetting('epg_url')
   try:
     pvr_addon = xbmcaddon.Addon('pvr.iptvsimple')
@@ -873,7 +878,7 @@ def export_epg_now():
   show_notification(addon.getLocalizedString(30310), xbmcgui.NOTIFICATION_INFO)
   m.export_channels_to_m3u8(channels_filename, only_subscribed)
 
-  if True: #not addon.getSettingBool('use_external_epg'):
+  if not addon.getSettingBool('use_external_epg'):
     show_notification(addon.getLocalizedString(30311), xbmcgui.NOTIFICATION_INFO)
     m.export_epg_to_xml(epg_filename, addon.getSettingInt('export_days'), report_progress, only_subscribed)
 
