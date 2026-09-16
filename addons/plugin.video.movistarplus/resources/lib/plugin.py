@@ -769,7 +769,13 @@ def import_session():
     close_folder(cacheToDisc=False)
     return
   try:
-    response = requests.get(url, timeout=15)
+    # requests' default User-Agent ("python-requests/x.y.z") is exactly what
+    # got the litterbox upload blocked earlier in this same session - the
+    # same family of anti-bot filtering is the likely cause of the "Remote
+    # end closed connection without response" seen fetching a catbox.moe URL
+    # with no custom headers, so a normal browser UA is sent here too.
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'}
+    response = requests.get(url, headers=headers, timeout=15)
     payload = response.json()
     if payload.get('movistarplus_session') != 1 or 'files' not in payload:
       raise ValueError('not a movistarplus session export')
