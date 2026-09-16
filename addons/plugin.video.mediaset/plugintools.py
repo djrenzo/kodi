@@ -761,7 +761,7 @@ def close_item_list():
     xbmcplugin.endOfDirectory(handle=int(sys.argv[1]), succeeded=True)
 
 def encode_headers(headers: dict) -> str:
-    return "&".join(f"{k}={v}" for k, v in headers.items())
+    return urllib.parse.urlencode(headers)
 
 def play_resolved_url(url, subtitles=None, headers=None):
     """
