@@ -769,12 +769,34 @@ def play_resolved_url(url, subtitles=None, headers=None):
     """
     _log(f"play_resolved_url [{url}]")
 
-    # Append headers if provided
-    if headers:
-        header_str = encode_headers(headers)
-        url = f"{url}|{header_str}"
+    header_str = encode_headers(headers) if headers else None
 
-    listitem = xbmcgui.ListItem(path=url)
+    # Route through inputstream.adaptive instead of Kodi's built-in ffmpeg HLS
+    # demuxer. The raw demuxer re-derives the stream's PTS offset on every seek
+    # or pause/resume, which loses sync with externally attached (setSubtitles)
+    # subtitles until playback is fully restarted. inputstream.adaptive keeps a
+    # single normalized timeline that survives those events.
+    use_isa = False
+    try:
+        import inputstreamhelper
+        isa_helper = inputstreamhelper.Helper('hls')
+        use_isa = isa_helper.check_inputstream()
+    except Exception as e:
+        _log(f"inputstreamhelper unavailable, falling back to direct playback: {e}")
+
+    if use_isa:
+        listitem = xbmcgui.ListItem(path=url)
+        listitem.setMimeType('application/vnd.apple.mpegurl')
+        listitem.setContentLookup(False)
+        listitem.setProperty('inputstream', 'inputstream.adaptive')
+        listitem.setProperty('inputstream.adaptive.manifest_type', 'hls')
+        if header_str:
+            listitem.setProperty('inputstream.adaptive.stream_headers', header_str)
+    else:
+        if header_str:
+            url = f"{url}|{header_str}"
+        listitem = xbmcgui.ListItem(path=url)
+
     listitem.setProperty('IsPlayable', 'true')
 
     # Add subtitles properly with names
