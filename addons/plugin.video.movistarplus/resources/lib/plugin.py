@@ -692,9 +692,12 @@ def upload_to_litterbox(content, filename):
   #
   # requests' automatic multipart encoder got a bare "No file!" back from
   # litterbox for reasons that didn't reproduce against a real multipart-
-  # parsing test server, so the body is hand-built and sent via urllib
-  # instead, matching plugin.video.torbox's litterbox uploader (torbox_paste.py)
-  # which is confirmed working against this same endpoint.
+  # parsing test server, so the body is hand-built instead, matching
+  # plugin.video.torbox's litterbox uploader (torbox_paste.py). But sending
+  # that body via bare urllib got HTTP 412 (Precondition Failed) - likely an
+  # edge/WAF layer objecting to urllib's minimal default headers (no Accept,
+  # Accept-Encoding, Connection, etc, which requests sets automatically) - so
+  # the hand-built body is sent via requests, keeping its fuller header set.
   try:
     boundary = uuid.uuid4().hex
     file_bytes = content.encode('utf-8')
@@ -711,19 +714,15 @@ def upload_to_litterbox(content, filename):
     parts.append('\r\n--{}--\r\n'.format(boundary).encode('utf-8'))
     body = b''.join(parts)
 
-    req = urllib2.Request(
-      'https://litterbox.catbox.moe/resources/internals/api.php',
-      data=body,
-      headers={
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Content-Type': 'multipart/form-data; boundary={}'.format(boundary),
-      }
-    )
-    response = urllib2.urlopen(req, timeout=30)
-    url = response.read().decode('utf-8').strip()
+    headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Content-Type': 'multipart/form-data; boundary={}'.format(boundary),
+    }
+    response = requests.post('https://litterbox.catbox.moe/resources/internals/api.php', data=body, headers=headers, timeout=30)
+    url = response.text.strip()
     if url.startswith('http'):
       return url
-    LOG('litterbox upload failed: {}'.format(url))
+    LOG('litterbox upload failed: status={} body={}'.format(response.status_code, url))
   except Exception as e:
     LOG('litterbox upload exception: {}'.format(e))
   return None
