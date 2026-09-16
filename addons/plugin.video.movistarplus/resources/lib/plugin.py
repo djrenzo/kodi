@@ -701,6 +701,11 @@ def upload_to_litterbox(content, filename):
   return None
 
 def export_session():
+  # add_menu_option always adds items as isFolder=True, so Kodi treats this
+  # click as a GetDirectory request and logs "GetDirectory - Error getting
+  # ..." unless we close it out, even though this action shows a dialog
+  # rather than a listing. close_folder(cacheToDisc=False) after the dialog
+  # satisfies that without listing anything.
   data = m.export_session_data()
   payload = json.dumps({'movistarplus_session': 1, 'files': data}, ensure_ascii=False)
   url = upload_to_litterbox(payload, 'movistarplus_session.json')
@@ -708,10 +713,12 @@ def export_session():
     xbmcgui.Dialog().textviewer(addon.getLocalizedString(30454), url)
   else:
     show_notification(addon.getLocalizedString(30456))
+  close_folder(cacheToDisc=False)
 
 def import_session():
   url = input_window(addon.getLocalizedString(30455))
   if not url:
+    close_folder(cacheToDisc=False)
     return
   try:
     response = requests.get(url, timeout=15)
@@ -723,6 +730,7 @@ def import_session():
   except Exception as e:
     LOG('import_session failed: {}'.format(e))
     show_notification(addon.getLocalizedString(30457))
+  close_folder(cacheToDisc=False)
 
 def select_account(id, name):
   m.switch_account(id)
