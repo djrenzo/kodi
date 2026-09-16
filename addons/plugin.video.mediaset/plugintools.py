@@ -826,7 +826,7 @@ def _shift_subtitle_url(url, offset_seconds, headers=None):
 
 _M3U8_VARIANT_RE = re.compile(r'#EXT-X-STREAM-INF:(?P<attrs>[^\n]*)\n(?P<uri>[^\n#][^\n]*)')
 _M3U8_BANDWIDTH_RE = re.compile(r'BANDWIDTH=(\d+)')
-_M3U8_SEPARATE_AUDIO_RE = re.compile(r'#EXT-X-MEDIA:TYPE=AUDIO[^\n]*URI="[^"]+"')
+_M3U8_SEPARATE_TRACK_RE = re.compile(r'#EXT-X-MEDIA:TYPE=(?:AUDIO|SUBTITLES)[^\n]*URI="[^"]+"')
 
 def _get_quality_mode():
     try:
@@ -843,8 +843,11 @@ def _pick_highest_variant_url(master_url, headers=None):
     bandwidth) - so the only reliable way to force it is to hand ISA a
     manifest with just one rendition to begin with. Returns None (caller
     falls back to normal master-playlist playback) if the manifest can't be
-    fetched/parsed, or if audio is a separate track referenced by the master
-    (this shortcut only works when audio is muxed into each video variant).
+    fetched/parsed, or if audio/subtitles are a separate track referenced by
+    the master (this shortcut only works when audio is muxed into each video
+    variant; a separate track's group linkage only exists at the master level
+    and would silently disappear if we hand ISA just one variant playlist -
+    this is exactly what live channels' embedded subtitle track needs).
     """
     try:
         req = urllib.request.Request(master_url, headers=headers or {})
@@ -854,8 +857,8 @@ def _pick_highest_variant_url(master_url, headers=None):
         _log(f"_pick_highest_variant_url: download failed for [{master_url}]: {e}")
         return None
 
-    if _M3U8_SEPARATE_AUDIO_RE.search(text):
-        _log("_pick_highest_variant_url: manifest has a separate audio track, skipping")
+    if _M3U8_SEPARATE_TRACK_RE.search(text):
+        _log("_pick_highest_variant_url: manifest has a separate audio/subtitle track, skipping")
         return None
 
     best_bandwidth, best_uri = -1, None
@@ -872,9 +875,11 @@ def _pick_highest_variant_url(master_url, headers=None):
 
     return urllib.parse.urljoin(master_url, best_uri)
 
-def play_resolved_url(url, subtitles=None, headers=None):
+def play_resolved_url(url, subtitles=None, headers=None, is_live=False):
     """
     Play a video URL in Kodi with optional subtitles (with names) and headers.
+    is_live=True enables inputstream.adaptive's timeshift buffer, so a live
+    channel can be paused/rewound instead of only supporting live-edge playback.
     """
     _log(f"play_resolved_url [{url}]")
 
@@ -918,6 +923,11 @@ def play_resolved_url(url, subtitles=None, headers=None):
         # variant. 'fixed-res' instead picks the best resolution that fits the
         # display, matching the old always-max-quality behavior.
         listitem.setProperty('inputstream.adaptive.stream_selection_type', 'fixed-res')
+        if is_live:
+            # Without this, ISA only keeps the live edge and Kodi shows just
+            # play/stop. This makes it accumulate a rewindable buffer instead,
+            # so pause/seek-back/catch-up work like a normal video.
+            listitem.setProperty('inputstream.adaptive.play_timeshift_buffer', 'true')
         if header_str:
             # manifest_headers covers the master AND every child .m3u8 variant
             # playlist; stream_headers covers only the actual media segments.

@@ -672,7 +672,8 @@ def miniserie_mitele_reproducir(params):
     plugintools.play_resolved_url(
             url=f"{picky}?{hts}",
             subtitles=subs,
-            headers=PLAY_HEADERS
+            headers=PLAY_HEADERS,
+            is_live=bool(canal)
         )
 
 # DONE
