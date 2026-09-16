@@ -59,7 +59,7 @@
 </addon>
 <addon id="plugin.video.movistarplus"
        name="Movistar+"
-       version="0.11.13"
+       version="0.11.14"
        provider-name="djrenzo">
   <requires>
   <!--- <import addon="xbmc.python" version="2.25.0"/> -->
