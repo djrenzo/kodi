@@ -799,7 +799,13 @@ def play_resolved_url(url, subtitles=None, headers=None):
         listitem.setProperty('inputstream', 'inputstream.adaptive')
         listitem.setProperty('inputstream.adaptive.manifest_type', 'hls')
         if header_str:
+            # manifest_headers covers the master AND every child .m3u8 variant
+            # playlist; stream_headers covers only the actual media segments.
+            # common_headers (Kodi v22+) unifies both but older ISA ignores it,
+            # so all three are set to cover whichever the running version reads.
+            listitem.setProperty('inputstream.adaptive.manifest_headers', header_str)
             listitem.setProperty('inputstream.adaptive.stream_headers', header_str)
+            listitem.setProperty('inputstream.adaptive.common_headers', header_str)
 
     listitem.setProperty('IsPlayable', 'true')
 
