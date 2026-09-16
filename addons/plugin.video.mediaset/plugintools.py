@@ -763,6 +763,67 @@ def close_item_list():
 def encode_headers(headers: dict) -> str:
     return urllib.parse.urlencode(headers)
 
+_VTT_TIME_RE = re.compile(
+    r'(?:(\d{2}):)?(\d{2}):(\d{2})\.(\d{3})\s*-->\s*(?:(\d{2}):)?(\d{2}):(\d{2})\.(\d{3})'
+)
+
+def _format_vtt_time(total_seconds):
+    if total_seconds < 0:
+        total_seconds = 0
+    whole = int(total_seconds)
+    ms = round((total_seconds - whole) * 1000)
+    if ms == 1000:
+        ms = 0
+        whole += 1
+    h, rem = divmod(whole, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
+
+def _shift_vtt_content(text, offset_seconds):
+    def repl(match):
+        h1, m1, s1, ms1, h2, m2, s2, ms2 = match.groups()
+        start = (int(h1 or 0) * 3600) + (int(m1) * 60) + int(s1) + int(ms1) / 1000.0
+        end = (int(h2 or 0) * 3600) + (int(m2) * 60) + int(s2) + int(ms2) / 1000.0
+        return f"{_format_vtt_time(start + offset_seconds)} --> {_format_vtt_time(end + offset_seconds)}"
+    return _VTT_TIME_RE.sub(repl, text)
+
+def _get_subtitle_offset():
+    try:
+        raw = get_setting('subtitle_offset')
+        return float(raw) if raw not in (None, '') else 0.0
+    except Exception:
+        return 0.0
+
+def _shift_subtitle_url(url, offset_seconds, headers=None):
+    """
+    Download a WebVTT subtitle file and shift its cue timestamps by offset_seconds,
+    returning a local file path. inputstream.adaptive presents a timeline rebased
+    to 0 for this addon's HLS streams, but the VTT cues are authored against the
+    stream's original (non-zero-based) timestamps, so they need a fixed correction
+    to land in sync; see resources/settings.xml "subtitle_offset".
+    """
+    try:
+        req = urllib.request.Request(url, headers=headers or {})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            text = resp.read().decode('utf-8', errors='replace')
+    except Exception as e:
+        _log(f"_shift_subtitle_url: download failed for [{url}]: {e}")
+        return url
+
+    shifted = _shift_vtt_content(text, offset_seconds)
+
+    temp_dir = xbmcvfs.translatePath('special://temp/plugin.video.mediaset/')
+    xbmcvfs.mkdirs(temp_dir)
+    local_path = os.path.join(temp_dir, f"sub_{abs(hash(url))}.vtt")
+    try:
+        with open(local_path, 'w', encoding='utf-8') as f:
+            f.write(shifted)
+    except Exception as e:
+        _log(f"_shift_subtitle_url: could not write [{local_path}]: {e}")
+        return url
+
+    return local_path
+
 def play_resolved_url(url, subtitles=None, headers=None):
     """
     Play a video URL in Kodi with optional subtitles (with names) and headers.
@@ -811,6 +872,9 @@ def play_resolved_url(url, subtitles=None, headers=None):
 
     # Add subtitles properly with names
     if subtitles:
+        offset = _get_subtitle_offset()
+        if offset:
+            subtitles = [_shift_subtitle_url(u, offset, headers) for u in subtitles]
         listitem.setSubtitles(subtitles)
 
     return xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, listitem)
