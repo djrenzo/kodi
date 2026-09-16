@@ -8,6 +8,7 @@ import sys
 import json
 import io
 import os.path
+import uuid
 import requests
 from datetime import datetime, timedelta
 from .timeconv import isodate2date
@@ -688,16 +689,38 @@ def upload_to_litterbox(content, filename):
   # litterbox.catbox.moe: anonymous, temporary (max 72h) file host. No account
   # needed on either side, which is why it's used here instead of something
   # that would require the importing device to authenticate too.
+  #
+  # requests' automatic multipart encoder got a bare "No file!" back from
+  # litterbox for reasons that didn't reproduce against a real multipart-
+  # parsing test server, so the body is hand-built and sent via urllib
+  # instead, matching plugin.video.torbox's litterbox uploader (torbox_paste.py)
+  # which is confirmed working against this same endpoint.
   try:
-    # A forced Content-Type (e.g. application/json) on the multipart part
-    # makes litterbox reject the upload with a bare "No file!" - matching
-    # working examples (catboxpy) means passing plain (filename, bytes) and
-    # letting requests pick the default, so a plain .txt name is used here
-    # rather than .json to keep that default innocuous.
-    files = {'fileToUpload': (filename, content.encode('utf-8'))}
-    data = {'reqtype': 'fileupload', 'time': '72h'}
-    response = requests.post('https://litterbox.catbox.moe/resources/internals/api.php', data=data, files=files, timeout=30)
-    url = response.text.strip()
+    boundary = uuid.uuid4().hex
+    file_bytes = content.encode('utf-8')
+    fields = {'reqtype': 'fileupload', 'time': '72h'}
+
+    parts = []
+    for name, value in fields.items():
+      parts.append('--{}\r\n'.format(boundary).encode('utf-8'))
+      parts.append('Content-Disposition: form-data; name="{}"\r\n\r\n{}\r\n'.format(name, value).encode('utf-8'))
+    parts.append('--{}\r\n'.format(boundary).encode('utf-8'))
+    parts.append('Content-Disposition: form-data; name="fileToUpload"; filename="{}"\r\n'.format(filename).encode('utf-8'))
+    parts.append(b'Content-Type: text/plain\r\n\r\n')
+    parts.append(file_bytes)
+    parts.append('\r\n--{}--\r\n'.format(boundary).encode('utf-8'))
+    body = b''.join(parts)
+
+    req = urllib2.Request(
+      'https://litterbox.catbox.moe/resources/internals/api.php',
+      data=body,
+      headers={
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Content-Type': 'multipart/form-data; boundary={}'.format(boundary),
+      }
+    )
+    response = urllib2.urlopen(req, timeout=30)
+    url = response.read().decode('utf-8').strip()
     if url.startswith('http'):
       return url
     LOG('litterbox upload failed: {}'.format(url))
