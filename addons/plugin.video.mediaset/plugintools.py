@@ -784,18 +784,22 @@ def play_resolved_url(url, subtitles=None, headers=None):
     except Exception as e:
         _log(f"inputstreamhelper unavailable, falling back to direct playback: {e}")
 
+    # Headers go on the URL itself too: some inputstream.adaptive versions only
+    # apply the stream_headers property to segment/license sub-requests and fetch
+    # the initial manifest using the bare path, so the CDN's Referer/User-Agent
+    # check on that first request 403s without this.
+    if header_str:
+        url = f"{url}|{header_str}"
+
+    listitem = xbmcgui.ListItem(path=url)
+
     if use_isa:
-        listitem = xbmcgui.ListItem(path=url)
         listitem.setMimeType('application/vnd.apple.mpegurl')
         listitem.setContentLookup(False)
         listitem.setProperty('inputstream', 'inputstream.adaptive')
         listitem.setProperty('inputstream.adaptive.manifest_type', 'hls')
         if header_str:
             listitem.setProperty('inputstream.adaptive.stream_headers', header_str)
-    else:
-        if header_str:
-            url = f"{url}|{header_str}"
-        listitem = xbmcgui.ListItem(path=url)
 
     listitem.setProperty('IsPlayable', 'true')
 
