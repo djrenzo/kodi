@@ -764,7 +764,7 @@ def encode_headers(headers: dict) -> str:
     return urllib.parse.urlencode(headers)
 
 _VTT_TIME_RE = re.compile(
-    r'(?:(\d{2}):)?(\d{2}):(\d{2})\.(\d{3})\s*-->\s*(?:(\d{2}):)?(\d{2}):(\d{2})\.(\d{3})'
+    r'(?:(\d{1,2}):)?(\d{2}):(\d{2})\.(\d{3})\s*-->\s*(?:(\d{1,2}):)?(\d{2}):(\d{2})\.(\d{3})'
 )
 
 def _format_vtt_time(total_seconds):
@@ -824,11 +824,64 @@ def _shift_subtitle_url(url, offset_seconds, headers=None):
 
     return local_path
 
+_M3U8_VARIANT_RE = re.compile(r'#EXT-X-STREAM-INF:(?P<attrs>[^\n]*)\n(?P<uri>[^\n#][^\n]*)')
+_M3U8_BANDWIDTH_RE = re.compile(r'BANDWIDTH=(\d+)')
+_M3U8_SEPARATE_AUDIO_RE = re.compile(r'#EXT-X-MEDIA:TYPE=AUDIO[^\n]*URI="[^"]+"')
+
+def _get_quality_mode():
+    try:
+        return 'force' if get_setting('quality_mode') == '1' else 'auto'
+    except Exception:
+        return 'auto'
+
+def _pick_highest_variant_url(master_url, headers=None):
+    """
+    Fetch an HLS master playlist and return the absolute URL of its highest-
+    BANDWIDTH variant. inputstream.adaptive has no chooser mode that forces
+    max quality regardless of screen size or measured bandwidth - only ways
+    to cap it lower ('fixed-res' adapts to screen, 'adaptive' adapts to
+    bandwidth) - so the only reliable way to force it is to hand ISA a
+    manifest with just one rendition to begin with. Returns None (caller
+    falls back to normal master-playlist playback) if the manifest can't be
+    fetched/parsed, or if audio is a separate track referenced by the master
+    (this shortcut only works when audio is muxed into each video variant).
+    """
+    try:
+        req = urllib.request.Request(master_url, headers=headers or {})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            text = resp.read().decode('utf-8', errors='replace')
+    except Exception as e:
+        _log(f"_pick_highest_variant_url: download failed for [{master_url}]: {e}")
+        return None
+
+    if _M3U8_SEPARATE_AUDIO_RE.search(text):
+        _log("_pick_highest_variant_url: manifest has a separate audio track, skipping")
+        return None
+
+    best_bandwidth, best_uri = -1, None
+    for match in _M3U8_VARIANT_RE.finditer(text):
+        bw_match = _M3U8_BANDWIDTH_RE.search(match.group('attrs'))
+        if not bw_match:
+            continue
+        bandwidth = int(bw_match.group(1))
+        if bandwidth > best_bandwidth:
+            best_bandwidth, best_uri = bandwidth, match.group('uri').strip()
+
+    if not best_uri:
+        return None
+
+    return urllib.parse.urljoin(master_url, best_uri)
+
 def play_resolved_url(url, subtitles=None, headers=None):
     """
     Play a video URL in Kodi with optional subtitles (with names) and headers.
     """
     _log(f"play_resolved_url [{url}]")
+
+    if _get_quality_mode() == 'force':
+        forced_url = _pick_highest_variant_url(url, headers)
+        if forced_url:
+            url = forced_url
 
     header_str = encode_headers(headers) if headers else None
 
@@ -859,6 +912,12 @@ def play_resolved_url(url, subtitles=None, headers=None):
         listitem.setContentLookup(False)
         listitem.setProperty('inputstream', 'inputstream.adaptive')
         listitem.setProperty('inputstream.adaptive.manifest_type', 'hls')
+        # Default ISA behavior ('adaptive') picks a rendition based on measured
+        # bandwidth and can settle below the best available quality, unlike the
+        # old raw ffmpeg playback which always grabbed the highest-bandwidth
+        # variant. 'fixed-res' instead picks the best resolution that fits the
+        # display, matching the old always-max-quality behavior.
+        listitem.setProperty('inputstream.adaptive.stream_selection_type', 'fixed-res')
         if header_str:
             # manifest_headers covers the master AND every child .m3u8 variant
             # playlist; stream_headers covers only the actual media segments.

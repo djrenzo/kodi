@@ -10,5 +10,9 @@
     <setting id="subtitle_offset" type="slider" label="Retraso de subtitulos (segundos). Sube el valor si aparecen antes de tiempo" default="10" range="-30,1,30" option="int"/>
   </category>
 
+  <category label="Calidad de video">
+    <setting id="quality_mode" type="enum" label="Seleccion de calidad" values="Auto (adaptada a la pantalla)|Forzar la maxima calidad disponible" default="1"/>
+  </category>
+
 
 </settings>
