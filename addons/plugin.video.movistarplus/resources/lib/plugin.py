@@ -689,7 +689,12 @@ def upload_to_litterbox(content, filename):
   # needed on either side, which is why it's used here instead of something
   # that would require the importing device to authenticate too.
   try:
-    files = {'fileToUpload': (filename, content.encode('utf-8'), 'application/json')}
+    # A forced Content-Type (e.g. application/json) on the multipart part
+    # makes litterbox reject the upload with a bare "No file!" - matching
+    # working examples (catboxpy) means passing plain (filename, bytes) and
+    # letting requests pick the default, so a plain .txt name is used here
+    # rather than .json to keep that default innocuous.
+    files = {'fileToUpload': (filename, content.encode('utf-8'))}
     data = {'reqtype': 'fileupload', 'time': '72h'}
     response = requests.post('https://litterbox.catbox.moe/resources/internals/api.php', data=data, files=files, timeout=30)
     url = response.text.strip()
@@ -708,7 +713,7 @@ def export_session():
   # satisfies that without listing anything.
   data = m.export_session_data()
   payload = json.dumps({'movistarplus_session': 1, 'files': data}, ensure_ascii=False)
-  url = upload_to_litterbox(payload, 'movistarplus_session.json')
+  url = upload_to_litterbox(payload, 'movistarplus_session.txt')
   if url:
     xbmcgui.Dialog().textviewer(addon.getLocalizedString(30454), url)
   else:
