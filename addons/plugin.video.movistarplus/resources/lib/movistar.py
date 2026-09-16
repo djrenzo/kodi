@@ -454,7 +454,18 @@ class Movistar(object):
       new_hz_token = self.get_session_token()
       if new_hz_token:
         self.account['session_token'] = new_hz_token
-      return
+        # Also patch the on-disk snapshot, so the 5-minute freshness window
+        # in __init__ (self.cache.load('tokens.json', 5)) doesn't keep handing
+        # out the stale token to the next call within that window.
+        content = self.cache.load_file('tokens.json')
+        if content:
+          try:
+            data = json.loads(content)
+            data['token'] = new_hz_token
+            self.cache.save_file('tokens.json', json.dumps(data, ensure_ascii=False))
+          except Exception:
+            pass
+      return new_hz_token
 
     def get_profiles(self):
       headers = self.net.headers.copy()

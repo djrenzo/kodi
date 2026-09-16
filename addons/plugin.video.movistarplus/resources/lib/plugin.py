@@ -77,8 +77,18 @@ def play(params):
     session_opened = True
     LOG('Open session: d: {}'.format(d))
     if d['resultCode'] != 0:
-      show_notification(d['resultText'])
-      return
+      # session_token (X-Hzid) can go stale server-side - e.g. another device
+      # sharing this same device_id rotating it - while the local tokens.json
+      # is still within its 5-minute freshness window and keeps handing out
+      # the stale value. Refresh just the session token (a lighter call than
+      # a full re-auth) and retry once before giving up.
+      LOG('Open session failed ({}), refreshing session token and retrying'.format(d.get('resultText')))
+      if m.update_session_token():
+        d = m.open_session(params['session_request'])
+        LOG('Open session (retry): d: {}'.format(d))
+      if d['resultCode'] != 0:
+        show_notification(d['resultText'])
+        return
     if 'resultData' in d and 'cToken' in d['resultData']:
       token = d['resultData']['cToken']
 
