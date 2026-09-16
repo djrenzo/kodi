@@ -605,6 +605,10 @@ msgctxt "#30458"
 msgid "Session imported. Go back to the main menu to use it."
 msgstr "Sesión importada. Vuelve al menú principal para usarla."
 
+msgctxt "#30459"
+msgid "Session exported (permanent link, delete it once imported). Enter this URL on the other device's Import session:"
+msgstr "Sesión exportada (enlace permanente, bórralo una vez importado). Introduce esta URL en Importar sesión del otro dispositivo:"
+
 #~ msgctxt "#30040"
 #~ msgid "Use only for these languages (e.g.: es en pt):"
 #~ msgstr "Usar solo para estos idiomas (ej: es en pt):"

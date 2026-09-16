@@ -685,47 +685,64 @@ def export_credentials():
   if directory:
     m.export_credentials(os.path.join(directory, 'credenciales.json'))
 
-def upload_to_litterbox(content, filename):
-  # litterbox.catbox.moe: anonymous, temporary (max 72h) file host. No account
-  # needed on either side, which is why it's used here instead of something
-  # that would require the importing device to authenticate too.
-  #
-  # requests' automatic multipart encoder got a bare "No file!" back from
-  # litterbox for reasons that didn't reproduce against a real multipart-
-  # parsing test server, so the body is hand-built instead, matching
-  # plugin.video.torbox's litterbox uploader (torbox_paste.py). But sending
-  # that body via bare urllib got HTTP 412 (Precondition Failed) - likely an
-  # edge/WAF layer objecting to urllib's minimal default headers (no Accept,
-  # Accept-Encoding, Connection, etc, which requests sets automatically) - so
-  # the hand-built body is sent via requests, keeping its fuller header set.
-  try:
-    boundary = uuid.uuid4().hex
-    file_bytes = content.encode('utf-8')
-    fields = {'reqtype': 'fileupload', 'time': '72h'}
+def _catbox_family_upload(url, filename, content, extra_fields):
+  # Shared by litterbox (temporary, auto-expiring) and catbox.moe (permanent)
+  # uploads - both use the same catbox backend/API shape. requests' automatic
+  # multipart encoder got a bare "No file!" back from litterbox for reasons
+  # that didn't reproduce against a real multipart-parsing test server, so
+  # the body is hand-built instead, matching plugin.video.torbox's uploader
+  # (torbox_paste.py). Sent via requests rather than bare urllib, since
+  # urllib's minimal default headers (no Accept, Accept-Encoding, Connection,
+  # etc, which requests sets automatically) got a 412 before even reaching
+  # the app - though the app can also reject a technically-valid body with a
+  # 412 of its own, as litterbox's "No file!" case does.
+  boundary = uuid.uuid4().hex
+  file_bytes = content.encode('utf-8')
+  fields = dict(extra_fields)
+  fields['reqtype'] = 'fileupload'
 
-    parts = []
-    for name, value in fields.items():
-      parts.append('--{}\r\n'.format(boundary).encode('utf-8'))
-      parts.append('Content-Disposition: form-data; name="{}"\r\n\r\n{}\r\n'.format(name, value).encode('utf-8'))
+  parts = []
+  for name, value in fields.items():
     parts.append('--{}\r\n'.format(boundary).encode('utf-8'))
-    parts.append('Content-Disposition: form-data; name="fileToUpload"; filename="{}"\r\n'.format(filename).encode('utf-8'))
-    parts.append(b'Content-Type: text/plain\r\n\r\n')
-    parts.append(file_bytes)
-    parts.append('\r\n--{}--\r\n'.format(boundary).encode('utf-8'))
-    body = b''.join(parts)
+    parts.append('Content-Disposition: form-data; name="{}"\r\n\r\n{}\r\n'.format(name, value).encode('utf-8'))
+  parts.append('--{}\r\n'.format(boundary).encode('utf-8'))
+  parts.append('Content-Disposition: form-data; name="fileToUpload"; filename="{}"\r\n'.format(filename).encode('utf-8'))
+  parts.append(b'Content-Type: text/plain\r\n\r\n')
+  parts.append(file_bytes)
+  parts.append('\r\n--{}--\r\n'.format(boundary).encode('utf-8'))
+  body = b''.join(parts)
 
-    headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'Content-Type': 'multipart/form-data; boundary={}'.format(boundary),
-    }
-    response = requests.post('https://litterbox.catbox.moe/resources/internals/api.php', data=body, headers=headers, timeout=30)
-    url = response.text.strip()
-    if url.startswith('http'):
-      return url
-    LOG('litterbox upload failed: status={} body={}'.format(response.status_code, url))
+  headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Content-Type': 'multipart/form-data; boundary={}'.format(boundary),
+  }
+  response = requests.post(url, data=body, headers=headers, timeout=30)
+  result = response.text.strip()
+  if result.startswith('http'):
+    return result
+  raise RuntimeError('status={} body={}'.format(response.status_code, result))
+
+def upload_to_litterbox(content, filename):
+  # Anonymous, temporary (max 72h) file host. No account needed on either
+  # side, which is why it's tried first for something that only needs to
+  # survive long enough to be imported on another device.
+  try:
+    return _catbox_family_upload(
+      'https://litterbox.catbox.moe/resources/internals/api.php', filename, content, {'time': '72h'})
   except Exception as e:
-    LOG('litterbox upload exception: {}'.format(e))
-  return None
+    LOG('litterbox upload failed: {}'.format(e))
+    return None
+
+def upload_to_catbox(content, filename):
+  # Fallback when litterbox rejects the upload. catbox.moe uploads are
+  # permanent (no expiry) and, anonymously, can't be deleted afterward -
+  # a real trade-off for something that carries live session tokens, but
+  # better than the export silently not working at all.
+  try:
+    return _catbox_family_upload('https://catbox.moe/user/api.php', filename, content, {})
+  except Exception as e:
+    LOG('catbox upload failed: {}'.format(e))
+    return None
 
 def export_session():
   # add_menu_option always adds items as isFolder=True, so Kodi treats this
@@ -739,7 +756,11 @@ def export_session():
   if url:
     xbmcgui.Dialog().textviewer(addon.getLocalizedString(30454), url)
   else:
-    show_notification(addon.getLocalizedString(30456))
+    url = upload_to_catbox(payload, 'movistarplus_session.txt')
+    if url:
+      xbmcgui.Dialog().textviewer(addon.getLocalizedString(30459), url)
+    else:
+      show_notification(addon.getLocalizedString(30456))
   close_folder(cacheToDisc=False)
 
 def import_session():
