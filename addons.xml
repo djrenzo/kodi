@@ -27,7 +27,7 @@
 </addon>
 <addon
 	id="plugin.video.mediaset"
-  version="1.0.12"
+  version="1.0.13"
   name="Mediaset"
   provider-name="equipo tvdidi">
 
