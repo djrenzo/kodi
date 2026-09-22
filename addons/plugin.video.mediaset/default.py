@@ -43,6 +43,14 @@ img_links = {
 def _log(msg):
     plugintools.log(f"--> mediaset - {msg} <--")
 
+def _download_context_menu(url="", extra="", ref_id="", title=""):
+    return [(
+        "Download",
+        "RunPlugin(%s)" % plugintools.build_plugin_url(
+            action="download_item", title=title, url=url, extra=extra, ref_id=ref_id
+        )
+    )]
+
 def run():
     _log("Running")
     # plugintools.set_view(plugintools.LIST)
@@ -224,7 +232,8 @@ def peliculas_mitele(params):
             thumbnail=foto,
             fanart=foto,
             folder=False,
-            isPlayable=True
+            isPlayable=True,
+            context_menu=_download_context_menu(url=link, title=title)
         )
 
     pagination = cuerpo.get("pagination") or {}
@@ -531,7 +540,8 @@ def show_episodes(params):
             thumbnail=img_url,
             fanart=thumbnail,
             folder=False,
-            isPlayable=True
+            isPlayable=True,
+            context_menu=_download_context_menu(url=url, ref_id=ref_id, title=title)
         )
     
     if pageInfo.get("hasNextPage"):
@@ -586,7 +596,8 @@ def _add_miniserie_episode(node):
         thumbnail=thumbnail_url,
         fanart=thumbnail_url,
         folder=False,
-        isPlayable=True
+        isPlayable=True,
+        context_menu=_download_context_menu(url=link, title=f"{subtitle} {title}".strip())
     )
 
 # DONE
@@ -632,8 +643,9 @@ def miniserie_mitele_server(params):
                 folder=True
             )
 
-# DONE
-def miniserie_mitele_reproducir(params):
+def _resolve_stream(params):
+    """Resolve params (as passed to miniserie_mitele_reproducir/download_item) into the
+    playable manifest URL, headers, subtitles and live flag, without playing/downloading it."""
     canal = params.get("extra")
     if canal:
         picky, bbx, gbx, subs = get_channel_playback(canal)
@@ -669,12 +681,31 @@ def miniserie_mitele_reproducir(params):
     # dls[0] is the FairPlay-DRM manifest; swap to the plain HLS variant Kodi can play.
     picky = picky.replace('hls-fairplay.ism', 'main.ism')
 
+    return f"{picky}?{hts}", PLAY_HEADERS, subs, bool(canal)
+
+# DONE
+def miniserie_mitele_reproducir(params):
+    url, headers, subs, is_live = _resolve_stream(params)
+
     plugintools.play_resolved_url(
-            url=f"{picky}?{hts}",
+            url=url,
             subtitles=subs,
-            headers=PLAY_HEADERS,
-            is_live=bool(canal)
+            headers=headers,
+            is_live=is_live
         )
+
+def download_item(params):
+    _log("download_item")
+    title = params.get("title") or "video"
+
+    try:
+        url, headers, subs, is_live = _resolve_stream(params)
+    except Exception as e:
+        _log(f"download_item: could not resolve stream: {e}")
+        xbmcgui.Dialog().notification("Mediaset", "No se pudo resolver el video para descargar", xbmcgui.NOTIFICATION_ERROR)
+        return
+
+    plugintools.download_hls_stream(url, title, headers=headers, is_live=is_live)
 
 # DONE
 def otro_reproducir(params):

@@ -14,5 +14,9 @@
     <setting id="quality_mode" type="enum" label="Seleccion de calidad" values="Auto (adaptada a la pantalla)|Forzar la maxima calidad disponible" default="1"/>
   </category>
 
+  <category label="Descargas">
+    <setting id="download_path" type="folder" label="Carpeta de descargas (soporta smb://)" default=""/>
+  </category>
+
 
 </settings>

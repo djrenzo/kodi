@@ -106,6 +106,8 @@ from io import StringIO
 
 import gzip  
 
+import requests
+
 
 
 module_log_enabled = False
@@ -696,7 +698,7 @@ def find_multiple_matches(text, pattern, flags=re.DOTALL):
 
 
 
-def add_item( action="" , title="" , plot="" , url="" , thumbnail="" , fanart="" , show="" , episode="" , extra="", page="", info_labels = None, isPlayable = False , folder=True, ref_id="" ):
+def add_item( action="" , title="" , plot="" , url="" , thumbnail="" , fanart="" , show="" , episode="" , extra="", page="", info_labels = None, isPlayable = False , folder=True, ref_id="", context_menu=None ):
 
     _log("add_item action=["+action+"] title=["+title+"] url=["+url+"] thumbnail=["+thumbnail+"] fanart=["+fanart+"] show=["+show+"] episode=["+episode+"] extra=["+extra+"] page=["+page+"] isPlayable=["+str(isPlayable)+"] folder=["+str(folder)+"]")
 
@@ -715,6 +717,12 @@ def add_item( action="" , title="" , plot="" , url="" , thumbnail="" , fanart=""
         info_labels = { "Title" : title, "FileName" : title, "Plot" : plot }
 
     listitem.setInfo( "video", info_labels )
+
+
+
+    if context_menu:
+
+        listitem.addContextMenuItems(context_menu)
 
 
 
@@ -750,6 +758,15 @@ def add_item( action="" , title="" , plot="" , url="" , thumbnail="" , fanart=""
 
         xbmcplugin.addDirectoryItem( handle=int(sys.argv[1]), url=itemurl, listitem=listitem, isFolder=folder)
 
+
+def build_plugin_url(action="", title="", url="", thumbnail="", plot="", extra="", page="", ref_id=""):
+    """Build a plugin:// callback URL using the same param scheme as add_item(), for
+    use in context menu RunPlugin() calls."""
+    return '%s?action=%s&title=%s&url=%s&thumbnail=%s&plot=%s&extra=%s&page=%s&ref_id=%s' % (
+        sys.argv[0], action, urllib.parse.quote_plus(title), urllib.parse.quote_plus(url),
+        urllib.parse.quote_plus(thumbnail), urllib.parse.quote_plus(plot),
+        urllib.parse.quote_plus(extra), urllib.parse.quote_plus(page), urllib.parse.quote_plus(ref_id)
+    )
 
 
 def close_item_list():
@@ -947,6 +964,129 @@ def play_resolved_url(url, subtitles=None, headers=None, is_live=False):
         listitem.setSubtitles(subtitles)
 
     return xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, listitem)
+
+
+def _sanitize_filename(title):
+    # Strip Kodi label markup tags (e.g. [B], [COLOR white]) and filesystem-unsafe chars.
+    stripped = re.sub(r'\[/?[A-Za-z]+[^\]]*\]', '', title or '')
+    stripped = re.sub(r'[\\/:*?"<>|]', '_', stripped).strip()
+    return stripped or 'download'
+
+
+def download_hls_stream(manifest_url, title, headers=None, subtitles=None, is_live=False):
+    """
+    Download an HLS stream (progressive or master playlist) to the folder configured
+    in the addon settings ("download_path"), which can be any Kodi VFS location
+    (local path or a network share such as smb://) since writes go through xbmcvfs.
+    Segments are concatenated in playlist order into a single output file; encrypted
+    (#EXT-X-KEY) segments and separate audio/subtitle tracks are not supported.
+    """
+    if is_live:
+        xbmcgui.Dialog().notification(__settings__.getAddonInfo('name'), "No se pueden descargar canales en directo", xbmcgui.NOTIFICATION_ERROR)
+        return False
+
+    dest_folder = get_setting('download_path')
+    if not dest_folder:
+        xbmcgui.Dialog().ok(__settings__.getAddonInfo('name'), "Configura primero una carpeta de descargas en los ajustes del addon.")
+        return False
+
+    headers = headers or {}
+
+    try:
+        playlist_url = manifest_url
+        resp = requests.get(playlist_url, headers=headers, timeout=15)
+        resp.raise_for_status()
+        text = resp.text
+    except Exception as e:
+        _log(f"download_hls_stream: could not fetch manifest [{manifest_url}]: {e}")
+        xbmcgui.Dialog().notification(__settings__.getAddonInfo('name'), "No se pudo descargar el manifiesto del video", xbmcgui.NOTIFICATION_ERROR)
+        return False
+
+    if '#EXT-X-STREAM-INF' in text:
+        variant_url = _pick_highest_variant_url(playlist_url, headers)
+        if not variant_url:
+            match = _M3U8_VARIANT_RE.search(text)
+            variant_url = urllib.parse.urljoin(playlist_url, match.group('uri').strip()) if match else None
+
+        if not variant_url:
+            _log("download_hls_stream: could not find a downloadable variant in master playlist")
+            xbmcgui.Dialog().notification(__settings__.getAddonInfo('name'), "No se encontro ningun stream descargable", xbmcgui.NOTIFICATION_ERROR)
+            return False
+
+        playlist_url = variant_url
+        try:
+            resp = requests.get(playlist_url, headers=headers, timeout=15)
+            resp.raise_for_status()
+            text = resp.text
+        except Exception as e:
+            _log(f"download_hls_stream: could not fetch variant playlist [{playlist_url}]: {e}")
+            xbmcgui.Dialog().notification(__settings__.getAddonInfo('name'), "No se pudo descargar la lista de variantes", xbmcgui.NOTIFICATION_ERROR)
+            return False
+
+    key_match = re.search(r'#EXT-X-KEY:(?!METHOD=NONE)[^\n]*', text)
+    if key_match:
+        _log("download_hls_stream: stream is encrypted (#EXT-X-KEY), cannot download")
+        xbmcgui.Dialog().notification(__settings__.getAddonInfo('name'), "El video esta cifrado y no se puede descargar", xbmcgui.NOTIFICATION_ERROR)
+        return False
+
+    init_match = re.search(r'#EXT-X-MAP:URI="([^"]+)"', text)
+    init_uri = urllib.parse.urljoin(playlist_url, init_match.group(1)) if init_match else None
+
+    segment_uris = [
+        urllib.parse.urljoin(playlist_url, line.strip())
+        for line in text.splitlines()
+        if line.strip() and not line.strip().startswith('#')
+    ]
+
+    if not segment_uris:
+        _log("download_hls_stream: no segments found in media playlist")
+        xbmcgui.Dialog().notification(__settings__.getAddonInfo('name'), "No se encontraron segmentos de video", xbmcgui.NOTIFICATION_ERROR)
+        return False
+
+    ext = '.mp4' if init_uri else '.ts'
+    dest_folder = dest_folder.rstrip('/') + '/'
+    dest_path = dest_folder + _sanitize_filename(title) + ext
+
+    if not xbmcvfs.exists(dest_folder):
+        xbmcvfs.mkdirs(dest_folder)
+
+    # DialogProgressBG is a non-modal "toast"-style progress bar: it never blocks
+    # the rest of the Kodi UI, so the user can navigate away (i.e. hide it) while
+    # the download keeps running, unlike the modal xbmcgui.DialogProgress.
+    progress = xbmcgui.DialogProgressBG()
+    progress.create(__settings__.getAddonInfo('name'), f"Descargando {title}")
+
+    ok = True
+    try:
+        out_file = xbmcvfs.File(dest_path, 'w')
+        try:
+            if init_uri:
+                init_resp = requests.get(init_uri, headers=headers, timeout=15)
+                init_resp.raise_for_status()
+                out_file.write(init_resp.content)
+
+            total = len(segment_uris)
+            for index, seg_url in enumerate(segment_uris):
+                progress.update(int(index * 100 / total), message=f"Segmento {index + 1}/{total}")
+
+                seg_resp = requests.get(seg_url, headers=headers, timeout=30)
+                seg_resp.raise_for_status()
+                out_file.write(seg_resp.content)
+        finally:
+            out_file.close()
+    except Exception as e:
+        _log(f"download_hls_stream: error downloading segments: {e}")
+        ok = False
+    finally:
+        progress.close()
+
+    if not ok:
+        xbmcvfs.delete(dest_path)
+        xbmcgui.Dialog().notification(__settings__.getAddonInfo('name'), f"Descarga fallida: {title}", xbmcgui.NOTIFICATION_WARNING)
+        return False
+
+    xbmcgui.Dialog().notification(__settings__.getAddonInfo('name'), f"Descarga completada: {title}", xbmcgui.NOTIFICATION_INFO)
+    return True
 
 
 def direct_play(url):
