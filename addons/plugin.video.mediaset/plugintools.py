@@ -102,6 +102,8 @@ import time
 
 import socket
 
+import hashlib
+
 from io import StringIO
 
 import gzip  
@@ -973,20 +975,73 @@ def _sanitize_filename(title):
     return stripped or 'download'
 
 
-def download_hls_stream(manifest_url, title, headers=None, subtitles=None, is_live=False):
+def content_id_for(url, ref_id=""):
     """
-    Download an HLS stream (progressive or master playlist) to the folder configured
-    in the addon settings ("download_path"), which can be any Kodi VFS location
-    (local path or a network share such as smb://) since writes go through xbmcvfs.
-    Segments are concatenated in playlist order into a single output file; encrypted
-    (#EXT-X-KEY) segments and separate audio/subtitle tracks are not supported.
+    Build a stable, filesystem-safe identifier for a piece of content (movie, series
+    episode, miniseries episode, etc.) from its API reference id and/or page url, so
+    each one gets its own unique download subfolder and can be looked up again later
+    regardless of title (which can repeat across episodes/seasons).
+    """
+    basis = ref_id or url or "item"
+    slug_source = (url or ref_id or "item").rstrip('/').split('/')[-1] or "item"
+    slug = re.sub(r'[^A-Za-z0-9._-]+', '_', slug_source)[:60]
+    digest = hashlib.sha1(basis.encode('utf-8')).hexdigest()[:10]
+    return f"{slug}_{digest}"
+
+
+def _content_download_dir(content_id):
+    dest_root = get_setting('download_path')
+    if not dest_root or not content_id:
+        return None
+    return dest_root.rstrip('/') + '/' + content_id + '/'
+
+
+def find_downloaded_media(content_id):
+    """Return (video_path, [subtitle_paths]) already downloaded for content_id, or
+    (None, []) if nothing has been downloaded for it yet."""
+    dest_dir = _content_download_dir(content_id)
+    if not dest_dir or not xbmcvfs.exists(dest_dir):
+        return None, []
+
+    _, files = xbmcvfs.listdir(dest_dir)
+    video_path = None
+    subtitle_paths = []
+    for f in files:
+        if f.startswith('video.'):
+            video_path = dest_dir + f
+        elif f.startswith('subtitle_') and f.endswith('.vtt'):
+            subtitle_paths.append(dest_dir + f)
+
+    return video_path, sorted(subtitle_paths)
+
+
+def play_local_file(path, subtitles=None):
+    _log(f"play_local_file [{path}]")
+
+    listitem = xbmcgui.ListItem(path=path)
+    listitem.setProperty('IsPlayable', 'true')
+    if subtitles:
+        listitem.setSubtitles(subtitles)
+
+    return xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, listitem)
+
+
+def download_hls_stream(manifest_url, title, content_id, headers=None, subtitles=None, is_live=False):
+    """
+    Download an HLS stream (progressive or master playlist) to a unique subfolder
+    (named after content_id) under the folder configured in the addon settings
+    ("download_path"), which can be any Kodi VFS location (local path or a network
+    share such as smb://) since writes go through xbmcvfs. Segments are concatenated
+    in playlist order into a single output file; encrypted (#EXT-X-KEY) segments and
+    separate audio/subtitle tracks are not supported. Subtitle track urls, if any,
+    are downloaded alongside the video so find_downloaded_media() can pick them up.
     """
     if is_live:
         xbmcgui.Dialog().notification(__settings__.getAddonInfo('name'), "No se pueden descargar canales en directo", xbmcgui.NOTIFICATION_ERROR)
         return False
 
-    dest_folder = get_setting('download_path')
-    if not dest_folder:
+    dest_dir = _content_download_dir(content_id)
+    if not dest_dir:
         xbmcgui.Dialog().ok(__settings__.getAddonInfo('name'), "Configura primero una carpeta de descargas en los ajustes del addon.")
         return False
 
@@ -1044,11 +1099,10 @@ def download_hls_stream(manifest_url, title, headers=None, subtitles=None, is_li
         return False
 
     ext = '.mp4' if init_uri else '.ts'
-    dest_folder = dest_folder.rstrip('/') + '/'
-    dest_path = dest_folder + _sanitize_filename(title) + ext
+    dest_path = dest_dir + 'video' + ext
 
-    if not xbmcvfs.exists(dest_folder):
-        xbmcvfs.mkdirs(dest_folder)
+    if not xbmcvfs.exists(dest_dir):
+        xbmcvfs.mkdirs(dest_dir)
 
     # DialogProgressBG is a non-modal "toast"-style progress bar: it never blocks
     # the rest of the Kodi UI, so the user can navigate away (i.e. hide it) while
@@ -1084,6 +1138,19 @@ def download_hls_stream(manifest_url, title, headers=None, subtitles=None, is_li
         xbmcvfs.delete(dest_path)
         xbmcgui.Dialog().notification(__settings__.getAddonInfo('name'), f"Descarga fallida: {title}", xbmcgui.NOTIFICATION_WARNING)
         return False
+
+    for index, sub_url in enumerate(subtitles or []):
+        try:
+            sub_resp = requests.get(sub_url, headers=headers, timeout=15)
+            sub_resp.raise_for_status()
+            sub_file = xbmcvfs.File(dest_dir + f'subtitle_{index}.vtt', 'w')
+            try:
+                sub_file.write(sub_resp.content)
+            finally:
+                sub_file.close()
+        except Exception as e:
+            # Subtitles are a nice-to-have; don't fail the whole download over one.
+            _log(f"download_hls_stream: could not download subtitle [{sub_url}]: {e}")
 
     xbmcgui.Dialog().notification(__settings__.getAddonInfo('name'), f"Descarga completada: {title}", xbmcgui.NOTIFICATION_INFO)
     return True

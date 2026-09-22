@@ -685,6 +685,13 @@ def _resolve_stream(params):
 
 # DONE
 def miniserie_mitele_reproducir(params):
+    content_id = plugintools.content_id_for(params.get("url"), params.get("ref_id"))
+    local_video, local_subs = plugintools.find_downloaded_media(content_id)
+    if local_video:
+        _log(f"miniserie_mitele_reproducir: playing downloaded copy [{local_video}]")
+        plugintools.play_local_file(local_video, subtitles=local_subs)
+        return
+
     url, headers, subs, is_live = _resolve_stream(params)
 
     plugintools.play_resolved_url(
@@ -705,7 +712,8 @@ def download_item(params):
         xbmcgui.Dialog().notification("Mediaset", "No se pudo resolver el video para descargar", xbmcgui.NOTIFICATION_ERROR)
         return
 
-    plugintools.download_hls_stream(url, title, headers=headers, is_live=is_live)
+    content_id = plugintools.content_id_for(params.get("url"), params.get("ref_id"))
+    plugintools.download_hls_stream(url, title, content_id, headers=headers, subtitles=subs, is_live=is_live)
 
 # DONE
 def otro_reproducir(params):
