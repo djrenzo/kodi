@@ -1,6 +1,6 @@
 import os
 import xml.etree.ElementTree as ET
-from urllib.parse import unquote
+from urllib.parse import parse_qsl, unquote, urlparse
 
 import xbmc
 import xbmcgui
@@ -8,20 +8,31 @@ import xbmcvfs
 
 from torbox_common import (
     ADDON,
+    ADDON_ID,
     APP_NAME,
+    SKIP_EXTS,
     VIDEO_EXTS,
     build_url,
     clean_show_name,
     extract_episode_info,
     get_account,
+    get_accounts,
     load_overrides,
     log,
 )
 from torbox_text import (
+    DIALOG_CLEANUP_CONFIRM,
+    DIALOG_CLEANUP_DONE,
+    DIALOG_CLEANUP_NOTHING,
+    DIALOG_CLEANUP_UNREACHABLE,
     DIALOG_LIBRARY_EXPORT_DONE,
     DIALOG_LIBRARY_PATH_NOT_CONFIGURED,
     DIALOG_LIBRARY_SOURCE_ADDED,
     NOTIFY_ACCOUNT_NOT_FOUND,
+    NOTIFY_NO_ACCOUNTS,
+    PROGRESS_CLEANUP_ACCOUNT,
+    PROGRESS_CLEANUP_LIBRARY,
+    PROGRESS_CLEANUP_TITLE,
 )
 from torbox_webdav import parse_propfind, propfind
 
@@ -405,3 +416,163 @@ def export_library_item(account_index, folder_name, remote_path):
         xbmc.executebuiltin('ActivateWindow(Videos,Files,return)')
     else:
         xbmc.executebuiltin('UpdateLibrary(video)')
+
+
+def _normalize_remote_path(url):
+    return unquote(urlparse(url).path).rstrip('/')
+
+
+def _collect_remote_paths(account, remote_path, found):
+    """Recursively add every remote file path to found. Returns False if any listing failed,
+    so a partial listing is never mistaken for missing content."""
+    xml_root = propfind(account['url'] + remote_path, account['username'], account['password'], depth=1)
+    if xml_root is None:
+        return False
+
+    for item in parse_propfind(xml_root, account['url'], remote_path):
+        if item['is_collection']:
+            child_path = unquote(item['path'])
+            if not child_path.endswith('/'):
+                child_path += '/'
+            if not _collect_remote_paths(account, child_path, found):
+                return False
+        else:
+            found.add(_normalize_remote_path(item['full_url']))
+
+    return True
+
+
+def _read_strm_target(strm_path):
+    """Return (account_index, remote_path) for a STRM written by this addon's export, else None."""
+    try:
+        with xbmcvfs.File(strm_path) as fh:
+            content = fh.read().strip()
+    except Exception as exc:
+        log('Could not read {}: {}'.format(strm_path, exc), xbmc.LOGWARNING)
+        return None
+
+    parsed = urlparse(content)
+    if parsed.scheme != 'plugin' or parsed.netloc != ADDON_ID:
+        return None
+
+    params = dict(parse_qsl(parsed.query))
+    if params.get('action') != 'play' or not params.get('url'):
+        return None
+
+    try:
+        account_index = int(params.get('account', 1))
+    except (TypeError, ValueError):
+        return None
+
+    return account_index, _normalize_remote_path(params['url'])
+
+
+def _list_dir(path):
+    dirs, files = xbmcvfs.listdir(path.rstrip('/') + '/')
+    return dirs, files
+
+
+def _remove_stale_strm(folder, strm_name):
+    """Delete a STRM plus its companion files (subtitles, thumbs) sharing the same basename."""
+    basename = os.path.splitext(strm_name)[0]
+    xbmcvfs.delete(join_path(folder, strm_name))
+
+    _, files = _list_dir(folder)
+    for filename in files:
+        if filename.startswith(basename + '.') and os.path.splitext(filename)[1].lower() in SKIP_EXTS:
+            xbmcvfs.delete(join_path(folder, filename))
+
+
+def _remove_folder_if_orphaned(folder):
+    """Remove a title folder once no STRM remains, but only if it holds nothing but metadata."""
+    dirs, files = _list_dir(folder)
+    if dirs or any(os.path.splitext(filename)[1].lower() not in SKIP_EXTS for filename in files):
+        return False
+
+    for filename in files:
+        xbmcvfs.delete(join_path(folder, filename))
+    return xbmcvfs.rmdir(folder.rstrip('/') + '/')
+
+
+def cleanup_library():
+    library_root = get_library_path()
+    if not library_root:
+        return
+
+    accounts = get_accounts()
+    if not accounts:
+        xbmcgui.Dialog().notification(APP_NAME, NOTIFY_NO_ACCOUNTS, xbmcgui.NOTIFICATION_ERROR)
+        return
+
+    progress = xbmcgui.DialogProgress()
+    progress.create(PROGRESS_CLEANUP_TITLE.format(APP_NAME))
+
+    available = {}
+    unreachable = []
+    stale = []
+    try:
+        for position, account in enumerate(accounts):
+            if progress.iscanceled():
+                return
+            progress.update(int(position * 50 / len(accounts)), PROGRESS_CLEANUP_ACCOUNT.format(account['name']))
+
+            found = set()
+            if _collect_remote_paths(account, '/', found):
+                available[account['index']] = found
+            else:
+                unreachable.append(account['name'])
+                log('Cleanup: skipping account {} (listing failed)'.format(account['name']), xbmc.LOGWARNING)
+
+        title_folders = []
+        for media_type in ('movie', 'tvshow'):
+            media_root = get_media_library_root(library_root, media_type)
+            if xbmcvfs.exists(media_root.rstrip('/') + '/'):
+                dirs, _ = _list_dir(media_root)
+                title_folders.extend(join_path(media_root, name) for name in sorted(dirs))
+
+        for position, folder in enumerate(title_folders):
+            if progress.iscanceled():
+                return
+            progress.update(
+                50 + int(position * 50 / max(1, len(title_folders))),
+                PROGRESS_CLEANUP_LIBRARY.format(os.path.basename(folder)),
+            )
+
+            _, files = _list_dir(folder)
+            for filename in files:
+                if os.path.splitext(filename)[1].lower() != '.strm':
+                    continue
+
+                target = _read_strm_target(join_path(folder, filename))
+                if target is None:
+                    continue
+
+                account_index, remote_path = target
+                # Only judge STRMs whose account was listed completely; anything else is kept.
+                if account_index in available and remote_path not in available[account_index]:
+                    stale.append((folder, filename))
+    finally:
+        progress.close()
+
+    if unreachable:
+        xbmcgui.Dialog().ok(APP_NAME, DIALOG_CLEANUP_UNREACHABLE.format(', '.join(unreachable)))
+
+    if not stale:
+        xbmcgui.Dialog().ok(APP_NAME, DIALOG_CLEANUP_NOTHING)
+        return
+
+    stale_folders = sorted({folder for folder, _ in stale})
+    preview = '\n'.join(os.path.basename(folder) for folder in stale_folders[:10])
+    if len(stale_folders) > 10:
+        preview += '\n...'
+    if not xbmcgui.Dialog().yesno(APP_NAME, DIALOG_CLEANUP_CONFIRM.format(len(stale), len(stale_folders), preview)):
+        return
+
+    for folder, filename in stale:
+        log('Cleanup: removing {}'.format(join_path(folder, filename)))
+        _remove_stale_strm(folder, filename)
+
+    removed_folders = sum(1 for folder in stale_folders if _remove_folder_if_orphaned(folder))
+
+    xbmcgui.Dialog().ok(APP_NAME, DIALOG_CLEANUP_DONE.format(len(stale), removed_folders))
+    xbmc.executebuiltin('CleanLibrary(video)')

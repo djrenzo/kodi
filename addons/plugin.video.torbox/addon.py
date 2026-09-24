@@ -33,7 +33,7 @@ from torbox_common import (
     search_streams,
 )
 from torbox_download import download_library_item
-from torbox_library import export_library, export_library_item
+from torbox_library import cleanup_library, export_library, export_library_item
 from torbox_setup import add_account, configure_providers
 from torbox_subtitles import add_subtitles, find_local_subtitles, search_subs_imdb_id
 from torbox_tmdb import get_external_id_from_tmdb, search_tmdb_movies, search_tmdb_tvshows
@@ -61,6 +61,7 @@ from torbox_text import (
     MENU_ACCOUNT_BROWSE,
     MENU_ACCOUNT_EXPORT,
     MENU_ADD_ACCOUNT,
+    MENU_CLEANUP_LIBRARY,
     MENU_CONFIGURE_PROVIDERS,
     MENU_TORBOX,
     MENU_MANAGEMENT,
@@ -202,6 +203,9 @@ def management_menu():
 
     li = xbmcgui.ListItem(label=MENU_IMPORT_OVERRIDES)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'import_overrides'}), li, isFolder=False)
+
+    li = xbmcgui.ListItem(label=MENU_CLEANUP_LIBRARY)
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'cleanup_library'}), li, isFolder=False)
 
     li = xbmcgui.ListItem(label=MENU_SETTINGS)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'settings'}), li, isFolder=False)
@@ -1242,6 +1246,8 @@ def router():
         xbmc.executebuiltin('UpdateLibrary(video)')
     elif action == 'export_library':
         export_library(_get_account_param(params))
+    elif action == 'cleanup_library':
+        cleanup_library()
     elif action == 'export_item':
         export_library_item(
             _get_account_param(params),

@@ -12,6 +12,7 @@ MENU_CONFIGURE_PROVIDERS = '[COLOR yellow]Configure provider keys via Phone[/COL
 MENU_MANAGE_OVERRIDES = '[COLOR yellow]Manage show overrides[/COLOR]'
 MENU_EXPORT_OVERRIDES = '[COLOR yellow]Export overrides[/COLOR]'
 MENU_IMPORT_OVERRIDES = '[COLOR yellow]Import overrides[/COLOR]'
+MENU_CLEANUP_LIBRARY = '[COLOR yellow]Cleanup library (remove titles no longer on TorBox)[/COLOR]'
 MENU_SETTINGS = '[COLOR gray]Settings[/COLOR]'
 
 CONTEXT_SET_OVERRIDE = 'Set show title/override'
@@ -25,6 +26,7 @@ LABEL_MEDIA_FOLDER = '[COLOR springgreen]{} |[/COLOR] {}'
 LABEL_GRAY_ITEM = '[COLOR gray]{}[/COLOR]'
 
 NOTIFY_ACCOUNT_NOT_FOUND = 'Account not found'
+NOTIFY_NO_ACCOUNTS = 'No accounts configured'
 NOTIFY_OVERRIDE_SAVED = 'Override saved: "{}" [{}]'
 NOTIFY_OVERRIDE_REMOVED = 'Override removed'
 NOTIFY_SEARCHING_TMDB = 'Searching TMDB...'
@@ -77,6 +79,16 @@ DIALOG_LIBRARY_SOURCE_ADDED = (
     'and set Content = TV Shows or Movies as appropriate.'
 )
 DIALOG_LIBRARY_SUBS_EXPORT_FIRST = 'Library path not configured. Export the library first.'
+
+PROGRESS_CLEANUP_TITLE = '{} - Library cleanup'
+PROGRESS_CLEANUP_ACCOUNT = 'Listing account: {}'
+PROGRESS_CLEANUP_LIBRARY = 'Checking: {}'
+DIALOG_CLEANUP_UNREACHABLE = (
+    'Could not fully list these accounts, so their exports were left untouched:\n{}'
+)
+DIALOG_CLEANUP_NOTHING = 'Library is clean. All exported titles are still available.'
+DIALOG_CLEANUP_CONFIRM = 'Remove {} STRM file(s) from {} title(s) no longer available?\n\n{}'
+DIALOG_CLEANUP_DONE = 'Cleanup complete\n\n{} STRM file(s) removed, {} folder(s) deleted.\nKodi will now clean the video library.'
 
 DIALOG_DOWNLOAD_PATH_NOT_CONFIGURED = 'Download folder not configured.\nSet it in the addon settings (Downloads).'
 DIALOG_DOWNLOAD_NO_VIDEOS = 'No video files found to download for "{}".'

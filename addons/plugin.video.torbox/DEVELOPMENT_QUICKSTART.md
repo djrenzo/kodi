@@ -29,6 +29,7 @@ Main actions handled by `router()` in `addon.py`:
 - `export_library`
 - `export_item`
 - `download_item`
+- `cleanup_library`
 
 ## Data Locations
 - Settings schema: `resources/settings.xml`
@@ -62,6 +63,12 @@ Notes:
   - TVDB -> `tvshow.nfo`
   - TMDB -> `movie.nfo`
 - First run adds `TorBox Library` source to Kodi.
+
+## Library Cleanup
+Management > Cleanup (`cleanup_library` in `torbox_library.py`) fully lists every configured
+account, removes exported STRMs (plus same-basename subtitles/thumbs) whose WebDAV file is gone,
+deletes title folders left with only metadata, then runs `CleanLibrary(video)`. Accounts that fail
+to list, and STRMs for accounts no longer configured, are left untouched. Downloads are never touched.
 
 ## Download Behavior
 `torbox_download.py` (context menu "Download") mirrors the export layout under `download_path`
