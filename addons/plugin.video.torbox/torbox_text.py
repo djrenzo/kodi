@@ -18,6 +18,7 @@ CONTEXT_SET_OVERRIDE = 'Set show title/override'
 CONTEXT_ADD_SUBTITLES = 'Add subtitles'
 CONTEXT_REFRESH_LIBRARY = 'Refresh library'
 CONTEXT_EXPORT_SINGLE_ITEM = 'Export this item to library'
+CONTEXT_DOWNLOAD_ITEM = 'Download'
 
 LABEL_MEDIA_UNKNOWN = '[COLOR red]{} |[/COLOR] {}'
 LABEL_MEDIA_FOLDER = '[COLOR springgreen]{} |[/COLOR] {}'
@@ -76,6 +77,14 @@ DIALOG_LIBRARY_SOURCE_ADDED = (
     'and set Content = TV Shows or Movies as appropriate.'
 )
 DIALOG_LIBRARY_SUBS_EXPORT_FIRST = 'Library path not configured. Export the library first.'
+
+DIALOG_DOWNLOAD_PATH_NOT_CONFIGURED = 'Download folder not configured.\nSet it in the addon settings (Downloads).'
+DIALOG_DOWNLOAD_NO_VIDEOS = 'No video files found to download for "{}".'
+DIALOG_DOWNLOAD_CONFIRM = 'Download {} file(s) ({}) for "{}"?'
+DIALOG_DOWNLOAD_DONE = 'Download complete\n\n{} video file(s) downloaded, {} already present, {} failed\n{} subtitle file(s) saved'
+PROGRESS_DOWNLOAD_TITLE = '{} - Downloading'
+PROGRESS_DOWNLOAD_FILE = '[{}/{}] {}'
+NOTIFY_DOWNLOAD_CANCELLED = 'Download cancelled'
 
 DIALOG_SETUP_SCAN_LABEL = 'Scan with your phone to add your {} account'
 DIALOG_SETUP_SCAN_PROVIDERS_LABEL = 'Scan with your phone to configure {} providers'

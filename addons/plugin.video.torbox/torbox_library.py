@@ -66,6 +66,19 @@ def get_library_path():
     return xbmcvfs.translatePath(path)
 
 
+def join_path(base, *parts):
+    """Join path parts, keeping '/' separators for Kodi VFS URLs such as smb://."""
+    if '://' not in base:
+        return os.path.join(base, *parts)
+
+    path = base.rstrip('/')
+    for part in parts:
+        part = part.strip('/')
+        if part:
+            path = '{}/{}'.format(path, part)
+    return path
+
+
 def write_text_file(path, content):
     folder = os.path.dirname(path)
     if not xbmcvfs.exists(folder):
@@ -92,7 +105,7 @@ def write_tvshow_nfo(show_folder, title, tvdb_id=None, tmdb_id=None, imdb_id=Non
         xml.append('  <uniqueid type="imdb">{}</uniqueid>'.format(imdb_id))
     xml.append('</tvshow>')
 
-    write_text_file(os.path.join(show_folder, 'tvshow.nfo'), '\n'.join(xml))
+    write_text_file(join_path(show_folder, 'tvshow.nfo'), '\n'.join(xml))
 
 
 def write_movie_nfo(movie_folder, title, year=None, tmdb_id=None, imdb_id=None):
@@ -114,13 +127,13 @@ def write_movie_nfo(movie_folder, title, year=None, tmdb_id=None, imdb_id=None):
         
     xml.append('</movie>')
 
-    write_text_file(os.path.join(movie_folder, 'movie.nfo'), '\n'.join(xml))
+    write_text_file(join_path(movie_folder, 'movie.nfo'), '\n'.join(xml))
 
 
 def get_media_library_root(library_root, media_type):
     if media_type == 'movie':
-        return os.path.join(library_root, 'movies')
-    return os.path.join(library_root, 'tvshows')
+        return join_path(library_root, 'movies')
+    return join_path(library_root, 'tvshows')
 
 
 def walk_webdav(account, remote_path):
@@ -186,32 +199,58 @@ def get_library_folder_for(folder_name):
     return os.path.join(media_root, sub_folder)
 
 
-def _export_collection(account, account_index, raw_name, child_path, overrides, movies_root, tvshows_root):
+def resolve_media_info(raw_name, overrides):
+    """Return title/year/ids/type for a WebDAV folder, preferring its manual override."""
     override = overrides.get(raw_name, {})
-    media_type = override.get('type', 'tvshow')
 
     if override:
         clean_title = override.get('title', raw_name)
         year = override.get('year')
-        tvdb_id = override.get('tvdb_id')
-        tmdb_id = override.get('tmdb_id')
-        imdb_id = override.get('imdb_id')
     else:
         clean_title, year = clean_show_name(raw_name)
-        tvdb_id = None
-        tmdb_id = None
-        imdb_id = None
 
+    return {
+        'media_type': override.get('type', 'tvshow'),
+        'title': clean_title,
+        'year': year,
+        'tvdb_id': override.get('tvdb_id'),
+        'tmdb_id': override.get('tmdb_id'),
+        'imdb_id': override.get('imdb_id'),
+        'subs': override.get('subs', []),
+    }
+
+
+def movie_folder_name(title, year):
+    return '{} ({})'.format(title, year) if year else title
+
+
+def episode_basename(title, season, episode_no):
+    return '{}.S{:02d}E{:02d}'.format(title, season, episode_no)
+
+
+def normalize_collection_path(child_path):
     normalized_path = unquote(child_path or '')
+    if normalized_path and not normalized_path.endswith('/'):
+        normalized_path += '/'
+    return normalized_path
+
+
+def _export_collection(account, account_index, raw_name, child_path, overrides, movies_root, tvshows_root):
+    info = resolve_media_info(raw_name, overrides)
+    media_type = info['media_type']
+    clean_title = info['title']
+    year = info['year']
+    tvdb_id = info['tvdb_id']
+    tmdb_id = info['tmdb_id']
+    imdb_id = info['imdb_id']
+
+    normalized_path = normalize_collection_path(child_path)
     if not normalized_path:
         return 0
 
-    if not normalized_path.endswith('/'):
-        normalized_path += '/'
-
     if media_type == 'movie':
-        folder_name = '{} ({})'.format(clean_title, year) if year else clean_title
-        movie_folder = os.path.join(movies_root, folder_name)
+        folder_name = movie_folder_name(clean_title, year)
+        movie_folder = join_path(movies_root, folder_name)
 
         if not xbmcvfs.exists(movie_folder):
             xbmcvfs.mkdirs(movie_folder)
@@ -224,7 +263,7 @@ def _export_collection(account, account_index, raw_name, child_path, overrides, 
             return 0
 
         strm_name = '{}.strm'.format(folder_name)
-        strm_path = os.path.join(movie_folder, strm_name)
+        strm_path = join_path(movie_folder, strm_name)
         plugin_url = build_url(
             {
                 'action': 'play',
@@ -236,7 +275,7 @@ def _export_collection(account, account_index, raw_name, child_path, overrides, 
         write_text_file(strm_path, plugin_url)
         return 1
 
-    show_folder = os.path.join(tvshows_root, clean_title)
+    show_folder = join_path(tvshows_root, clean_title)
     if not xbmcvfs.exists(show_folder):
         xbmcvfs.mkdirs(show_folder)
 
@@ -248,8 +287,8 @@ def _export_collection(account, account_index, raw_name, child_path, overrides, 
         if season is None:
             continue
 
-        strm_name = '{}.S{:02d}E{:02d}.strm'.format(clean_title, season, episode_no)
-        strm_path = os.path.join(show_folder, strm_name)
+        strm_name = '{}.strm'.format(episode_basename(clean_title, season, episode_no))
+        strm_path = join_path(show_folder, strm_name)
         plugin_url = build_url(
             {
                 'action': 'play',

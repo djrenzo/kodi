@@ -32,12 +32,14 @@ from torbox_common import (
     export_overrides,
     search_streams,
 )
+from torbox_download import download_library_item
 from torbox_library import export_library, export_library_item
 from torbox_setup import add_account, configure_providers
 from torbox_subtitles import add_subtitles, find_local_subtitles, search_subs_imdb_id
 from torbox_tmdb import get_external_id_from_tmdb, search_tmdb_movies, search_tmdb_tvshows
 from torbox_text import (
     CONTEXT_ADD_SUBTITLES,
+    CONTEXT_DOWNLOAD_ITEM,
     CONTEXT_EXPORT_SINGLE_ITEM,
     CONTEXT_REFRESH_LIBRARY,
     CONTEXT_SET_OVERRIDE,
@@ -320,6 +322,19 @@ def list_directory(account_index, remote_path, is_library_root=False):
                             build_url(
                                 {
                                     'action': 'export_item',
+                                    'folder_name': name,
+                                    'path': child_path,
+                                    'account': account_index,
+                                }
+                            )
+                        ),
+                    ),
+                    (
+                        CONTEXT_DOWNLOAD_ITEM,
+                        'RunPlugin({})'.format(
+                            build_url(
+                                {
+                                    'action': 'download_item',
                                     'folder_name': name,
                                     'path': child_path,
                                     'account': account_index,
@@ -1229,6 +1244,12 @@ def router():
         export_library(_get_account_param(params))
     elif action == 'export_item':
         export_library_item(
+            _get_account_param(params),
+            params.get('folder_name', ''),
+            params.get('path', ''),
+        )
+    elif action == 'download_item':
+        download_library_item(
             _get_account_param(params),
             params.get('folder_name', ''),
             params.get('path', ''),

@@ -27,11 +27,14 @@ Main actions handled by `router()` in `addon.py`:
 - `settings`
 - `refresh`
 - `export_library`
+- `export_item`
+- `download_item`
 
 ## Data Locations
 - Settings schema: `resources/settings.xml`
 - Manual overrides: profile `overrides.json` (accessed via `load_overrides` / `save_overrides`)
 - Library export root: addon setting `library_path`
+- Download root: addon setting `download_path` (local or `smb://`, written via `xbmcvfs`)
 
 ## Current Conventions
 - Keep orchestration in `addon.py`.
@@ -59,6 +62,12 @@ Notes:
   - TVDB -> `tvshow.nfo`
   - TMDB -> `movie.nfo`
 - First run adds `TorBox Library` source to Kodi.
+
+## Download Behavior
+`torbox_download.py` (context menu "Download") mirrors the export layout under `download_path`
+(`movies/<Title (Year)>/`, `tvshows/<Title>/`) with the real media files instead of STRMs,
+writes the same NFOs, and fetches override `subs` next to the videos. Files stream to a
+`.part` file and are renamed when complete; files already present with the same size are skipped.
 
 ## Known Editor Caveat
 Outside Kodi runtime, unresolved import warnings for `xbmc*` modules are expected and usually not real runtime failures.

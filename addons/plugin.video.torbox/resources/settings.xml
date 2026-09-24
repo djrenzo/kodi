@@ -28,6 +28,9 @@
     <setting id="library_source_created" type="bool" label="Is library created" default="false"/>
     <setting id="library_overrides_path" type="text" label="Library Overrides Path" default="https://raw.githubusercontent.com/djrenzo/EPG/main/overrides.json"/>
   </category>
+  <category label="Downloads">
+    <setting id="download_path" type="folder" label="Download Folder (local or smb://)" option="writeable" default=""/>
+  </category>
   <category label="Playback">
     <setting id="stream_verify_ssl" type="bool" label="Verify SSL certificates" default="true"/>
     <setting id="show_hidden" type="bool" label="Show hidden files" default="false"/>
