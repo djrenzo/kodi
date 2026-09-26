@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<addon id="plugin.video.skipdb"
+       name="SkipDB Kodi Addon"
+       version="1.0.0"
+       provider-name="djrenzo">
+    <requires>
+        <import addon="xbmc.python" version="3.0.1"/>
+    </requires>
+    <extension point="xbmc.service" library="service.py" start="startup"/>
+    <extension point="xbmc.addon.metadata">
+        <summary lang="en_GB">Skip intro, recap, credits, and preview segments in movies and TV shows using SkipDB</summary>
+        <summary lang="es_ES">Omite intros, resúmenes, créditos y avances en películas y series usando SkipDB</summary>
+        <description lang="en_GB">Looks up segment timings from the open SkipDB database (skipdb.tv) while you watch, and lets you submit missing intro, recap, credits and preview timings. Needs an IMDb id (tt…); TV episodes are matched by the show's IMDb id with season/episode. Based on the TheIntroDB Kodi addon (plugin.video.tidb). Segment data is licensed ODbL 1.0.</description>
+        <description lang="es_ES">Consulta los tiempos de los segmentos en la base de datos abierta SkipDB (skipdb.tv) mientras ves contenido, y permite enviar intros, resúmenes, créditos y avances que falten. Requiere un ID de IMDb (tt…); los episodios se identifican con el ID de IMDb de la serie más temporada/episodio. Basado en el addon de TheIntroDB para Kodi (plugin.video.tidb). Datos bajo licencia ODbL 1.0.</description>
+        <platform>all</platform>
+        <license>GPL-2.0-or-later</license>
+        <website>https://skipdb.tv</website>
+        <assets>
+            <icon>resources/icon.png</icon>
+        </assets>
+        <news lang="en_GB">v1.0.0 - SkipDB port of plugin.video.tidb: skip and submit intro, recap, credits (outro) and preview segments.</news>
+    </extension>
+</addon>
