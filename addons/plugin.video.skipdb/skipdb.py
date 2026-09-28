@@ -268,8 +268,8 @@ def _parse_segment(api_type: str, seg: Any) -> Optional[Dict[str, Any]]:
         return None
     start = seg.get('start_ms')
     end = seg.get('end_ms')
-    if start is None:
-        start = 0
+    # duration shifting can push a segment that starts at 0 slightly negative
+    start = max(0, start or 0)
     # "0 → 0" is SkipDB's "confirmed: this episode has no such segment" sentinel
     if end is not None and end <= start:
         return None
@@ -282,6 +282,7 @@ def _parse_segment(api_type: str, seg: Any) -> Optional[Dict[str, Any]]:
         'score': float(seg.get('confidence') if seg.get('confidence') is not None else 0.5),
         'match': seg.get('match') or 'agnostic',
         'type': API_TO_LOCAL[api_type],
+        'source': 'skipdb',
     }
 
 

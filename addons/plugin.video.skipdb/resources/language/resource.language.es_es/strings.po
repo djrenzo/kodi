@@ -178,3 +178,23 @@ msgstr "Agresivo (en ambos sentidos)"
 msgctxt "#32054"
 msgid "Off (never shift)"
 msgstr "Desactivado (nunca desplazar)"
+
+msgctxt "#32055"
+msgid "Fallback databases"
+msgstr "Bases de datos alternativas"
+
+msgctxt "#32056"
+msgid "Use TheIntroDB when SkipDB has no data"
+msgstr "Usar TheIntroDB si SkipDB no tiene datos"
+
+msgctxt "#32057"
+msgid "Optional TheIntroDB API key"
+msgstr "Clave API opcional de TheIntroDB"
+
+msgctxt "#32058"
+msgid "After a fallback skip, pause and ask if it was correct (offers SkipDB submission)"
+msgstr "Tras saltar con datos alternativos, pausar y preguntar si fue correcto (ofrece enviar a SkipDB)"
+
+msgctxt "#32059"
+msgid "Then use IntroDB (introdb.app) when still no data"
+msgstr "Después usar IntroDB (introdb.app) si sigue sin datos"

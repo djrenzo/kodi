@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2026 TheIntroDB (original plugin.video.tidb)
 #
-# kodi service entry: poll playback, query skipdb, show skip ui or auto-seek
+# kodi service entry: poll playback, query skipdb (theintrodb as fallback), show skip ui or auto-seek
+import time
 import xbmc
 import xbmcaddon
 import xbmcgui
@@ -12,6 +13,8 @@ import skipper
 import overlay as overlay_mod
 import submit_overlay
 import skipdb
+import theintrodb
+import introdb_app
 
 ADDON = xbmcaddon.Addon()
 _ADDON_ID = ADDON.getAddonInfo('id')
@@ -37,8 +40,14 @@ STR_ALREADY_IN_SKIPDB = 32051
 
 SEGMENT_TYPES = ('intro', 'recap', 'credits', 'preview')
 
+# display names for fallback sources in the confirm dialog
+SOURCE_NAMES = {'theintrodb': 'TheIntroDB', 'introdb_app': 'IntroDB'}
+
 # end-of-stream tolerance: an outro/preview ending this close to the end is treated as "runs to the end"
 END_OF_MEDIA_TOLERANCE_SECS = 10.0
+
+# our own pause for the "was this skip correct?" dialog must not start the mark-start submit flow
+OWN_PAUSE_GRACE_SECS = 5.0
 
 
 class SkipDBMonitor(xbmc.Monitor):
@@ -112,6 +121,8 @@ class PlaybackSession:
     submit_start_sec: Optional[float]
     submit_prompted_this_pause: bool
     submitted_types: set
+    confirmed_segments: set
+    suppress_submit_until: float
     last_seen_pause_count: int
 
     def __init__(self) -> None:
@@ -128,6 +139,9 @@ class PlaybackSession:
         self.submit_start_sec = None
         self.submit_prompted_this_pause = False
         self.submitted_types = set()
+        # TheIntroDB segments the user was already asked about for this file
+        self.confirmed_segments = set()
+        self.suppress_submit_until = 0.0
         self.last_seen_pause_count = 0
 
 
@@ -239,6 +253,7 @@ def _handle_segment(segment: Dict[str, Any], segment_idx: int, player: SkipDBPla
         skipper.execute_skip(player, api_start, api_end, filename, segment_type)
         _debug_osd('Auto-skipped {}'.format(segment_name))
         xbmc.log('[SkipDB] Auto-skipped {} to {:.1f}s'.format(segment_name, api_end), xbmc.LOGINFO)
+        _confirm_fallback_skip(segment, api_start, api_end, player, monitor, session)
         return None
 
     # Check for next-episode promotion
@@ -259,9 +274,83 @@ def _handle_segment(segment: Dict[str, Any], segment_idx: int, player: SkipDBPla
         xbmc.log('[SkipDB] User pressed Skip {}'.format(segment_name), xbmc.LOGINFO)
         skipper.execute_skip(player, api_start, api_end, filename, segment_type)
         _debug_osd('Skipped {} to {:.1f}s'.format(segment_name, api_end))
+        _confirm_fallback_skip(segment, api_start, api_end, player, monitor, session)
     else:
         xbmc.log('[SkipDB] User did NOT skip {}'.format(segment_name), xbmc.LOGINFO)
     return None
+
+
+def _confirm_fallback_skip(segment: Dict[str, Any], api_start: float, api_end: float, player: SkipDBPlayer,
+                           monitor: xbmc.Monitor, session: PlaybackSession) -> None:
+    """After skipping fallback (non-SkipDB) data: pause, ask if the skip was right, and offer to submit it to SkipDB."""
+    source_name = SOURCE_NAMES.get(segment.get('source'))
+    if not source_name or not _fresh_bool('confirm_fallback_skips'):
+        return
+
+    segment_type = segment['type']
+    key = '{}:{:.1f}:{}'.format(segment_type, api_start, segment.get('end'))
+    if key in session.confirmed_segments:
+        return
+    session.confirmed_segments.add(key)
+
+    type_label = ADDON.getLocalizedString(STR_SEGMENT_LABELS[segment_type])
+    dialog = xbmcgui.Dialog()
+    paused_here = False
+    try:
+        if player.isPlaying() and not xbmc.getCondVisibility('Player.Paused'):
+            monitor.waitForAbort(0.5)  # let the seek land before pausing
+            player.pause()
+            paused_here = True
+
+        correct = dialog.yesno(
+            'SkipDB',
+            'Skipped {} ({:.0f}s \u2192 {:.0f}s) using {} data, because SkipDB has none yet.[CR][CR]'
+            'Was this skip correct?'.format(type_label, api_start, api_end, source_name),
+        )
+        xbmc.log('[SkipDB] Fallback ({}) {} skip confirmed correct: {}'.format(
+            source_name, segment_type, correct), xbmc.LOGINFO)
+        if not correct:
+            return
+
+        media_ids = session.media_ids or {}
+        if segment_type in session.submitted_types:
+            return
+        if not media_ids.get('lookup_imdb_id'):
+            xbmc.executebuiltin('Notification(SkipDB, No IMDb id for this item — cannot submit to SkipDB, 4000)')
+            return
+        if not (xbmcaddon.Addon(_ADDON_ID).getSetting('skipdb_api_key') or '').strip():
+            xbmc.executebuiltin('Notification(SkipDB, Set a SkipDB API key in the settings to submit, 4000)')
+            return
+
+        if not dialog.yesno('SkipDB', 'Submit this {} ({:.0f}s \u2192 {:.0f}s) to SkipDB?'.format(
+                type_label, api_start, api_end)):
+            return
+
+        # keep "runs to the end" credits open-ended; SkipDB fills in the duration
+        end = segment.get('end')
+        if end is None and segment_type != 'credits':
+            end = api_end
+        if end is None and not media_ids.get('duration_ms'):
+            end = api_end
+
+        success, msg = skipdb.submit_segment(
+            imdb_id=media_ids.get('lookup_imdb_id'),
+            season=media_ids.get('season'),
+            episode=media_ids.get('episode'),
+            is_movie=media_ids.get('is_movie', False),
+            segment=segment_type,
+            start_sec=api_start,
+            end_sec=end,
+            video_duration_ms=media_ids.get('duration_ms'),
+        )
+        xbmc.executebuiltin('Notification(SkipDB, {}, {})'.format(msg, 3000 if success else 4000))
+        if success:
+            session.submitted_types.add(segment_type)
+    finally:
+        if paused_here and player.isPlaying() and xbmc.getCondVisibility('Player.Paused'):
+            player.pause()
+        session.suppress_submit_until = time.time() + OWN_PAUSE_GRACE_SECS
+        session.submit_prompted_this_pause = True
 
 
 def _handle_next_episode(player: SkipDBPlayer, monitor: xbmc.Monitor, session: PlaybackSession, api_end: float, segment_type: str, segment_idx: int) -> Optional[str]:
@@ -304,7 +393,8 @@ def _handle_submit_tick(session: PlaybackSession, player: SkipDBPlayer, monitor:
 
     # Detect fresh pause edge via callback-driven counter
     if current_pause_count > session.last_seen_pause_count:
-        session.submit_prompted_this_pause = False
+        # a pause right after our own confirm dialog is ours, not the user asking to mark a segment
+        session.submit_prompted_this_pause = time.time() < session.suppress_submit_until
         session.last_seen_pause_count = current_pause_count
 
     if not _should_offer_submit(session, is_paused, media_ids):
@@ -391,7 +481,7 @@ def _pick_segment_type(session: PlaybackSession, player: SkipDBPlayer, start: fl
     labels = []
     for seg_type in choices:
         label = ADDON.getLocalizedString(STR_SEGMENT_LABELS[seg_type])
-        if all_segments.get(seg_type):
+        if any(seg.get('source') == 'skipdb' for seg in all_segments.get(seg_type) or []):
             label = '{} {}'.format(label, ADDON.getLocalizedString(STR_ALREADY_IN_SKIPDB))
         labels.append(label)
 
@@ -475,6 +565,39 @@ def _mark_end_and_submit(session: PlaybackSession, player: SkipDBPlayer, monitor
     return False
 
 
+# ── Segment lookup ────────────────────────────────────────────────────────
+
+def _fetch_segments(skipdb_on: bool, imdb: Optional[str], tmdb: Optional[str], introdb_imdb: Optional[str],
+                    season: Any, episode: Any, is_movie: bool, duration_ms: Optional[int]) -> Dict[str, Any]:
+    """SkipDB first; any segment type it has no data for is filled from TheIntroDB, then IntroDB (introdb.app)."""
+    all_segments: Dict[str, Any] = {}
+    if skipdb_on and imdb:
+        all_segments = skipdb.query_all_segments(
+            imdb_id=imdb, season=season, episode=episode, is_movie=is_movie, duration_ms=duration_ms)
+
+    missing = [t for t in SEGMENT_TYPES if not all_segments.get(t)]
+    if missing and _fresh_bool('theintrodb_fallback') and (tmdb or introdb_imdb):
+        fallback = theintrodb.query_all_segments(
+            tmdb_id=tmdb, imdb_id=introdb_imdb, season=season, episode=episode,
+            is_movie=is_movie, duration_ms=duration_ms)
+        for seg_type in missing:
+            if fallback.get(seg_type):
+                all_segments[seg_type] = fallback[seg_type]
+                xbmc.log('[SkipDB] Using TheIntroDB fallback for {}'.format(seg_type), xbmc.LOGINFO)
+
+    # IntroDB matches on the same ids as SkipDB (the show's IMDb id + season/episode)
+    missing = [t for t in SEGMENT_TYPES if not all_segments.get(t)]
+    if missing and _fresh_bool('introdb_app_fallback') and imdb:
+        fallback = introdb_app.query_all_segments(
+            imdb_id=imdb, season=season, episode=episode, is_movie=is_movie)
+        for seg_type in missing:
+            if fallback.get(seg_type):
+                all_segments[seg_type] = fallback[seg_type]
+                xbmc.log('[SkipDB] Using IntroDB fallback for {}'.format(seg_type), xbmc.LOGINFO)
+
+    return all_segments
+
+
 # ── Main service loop ─────────────────────────────────────────────────────
 
 def _run_service() -> None:
@@ -534,6 +657,9 @@ def _run_service() -> None:
                 session.media_ids.get('is_movie', False)), xbmc.LOGINFO)
         media_ids = session.media_ids
         imdb = media_ids.get('lookup_imdb_id')
+        tmdb = media_ids.get('tmdb_id')
+        # TheIntroDB matches episodes by the show's TMDB id or the episode's own IMDb id
+        introdb_imdb = media_ids.get('imdb_id') or media_ids.get('show_imdb_id')
         m_season = media_ids.get('season')
         m_episode = media_ids.get('episode')
         m_movie = media_ids.get('is_movie', False)
@@ -545,15 +671,11 @@ def _run_service() -> None:
                 _raw, skipdb_on), xbmc.LOGINFO)
 
         # ── Fetch segments (cached) ──
-        all_segments = {}
-        if skipdb_on and imdb:
-            if session.all_segments is None:
-                session.all_segments = skipdb.query_all_segments(
-                    imdb_id=imdb,
-                    season=m_season, episode=m_episode, is_movie=m_movie,
-                    duration_ms=media_ids.get('duration_ms'),
-                )
-            all_segments = session.all_segments or {}
+        if session.all_segments is None:
+            session.all_segments = _fetch_segments(
+                skipdb_on, imdb, tmdb, introdb_imdb, m_season, m_episode, m_movie,
+                media_ids.get('duration_ms'))
+        all_segments = session.all_segments or {}
 
         if all_segments and _debug_logging():
             xbmc.log('[SkipDB] API returned segments: {}'.format(

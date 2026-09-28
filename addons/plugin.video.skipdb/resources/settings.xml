@@ -23,6 +23,12 @@
         <setting id="test_api_key_now" type="bool" label="$ADDON[plugin.video.skipdb 32041]" default="false"/>
         <setting id="test_api_key_note" type="text" label="$ADDON[plugin.video.skipdb 32042]" enable="false"/>
     </category>
+    <category label="$ADDON[plugin.video.skipdb 32055]">
+        <setting id="theintrodb_fallback" type="bool" label="$ADDON[plugin.video.skipdb 32056]" default="true"/>
+        <setting id="introdb_api_key" type="text" label="$ADDON[plugin.video.skipdb 32057]" default=""/>
+        <setting id="introdb_app_fallback" type="bool" label="$ADDON[plugin.video.skipdb 32059]" default="true"/>
+        <setting id="confirm_fallback_skips" type="bool" label="$ADDON[plugin.video.skipdb 32058]" default="true"/>
+    </category>
     <category label="$ADDON[plugin.video.skipdb 32028]">
         <setting id="enable_submissions" type="bool" label="$ADDON[plugin.video.skipdb 32024]" default="false"/>
     </category>

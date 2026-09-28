@@ -178,3 +178,23 @@ msgstr ""
 msgctxt "#32054"
 msgid "Off (never shift)"
 msgstr ""
+
+msgctxt "#32055"
+msgid "Fallback databases"
+msgstr ""
+
+msgctxt "#32056"
+msgid "Use TheIntroDB when SkipDB has no data"
+msgstr ""
+
+msgctxt "#32057"
+msgid "Optional TheIntroDB API key"
+msgstr ""
+
+msgctxt "#32058"
+msgid "After a fallback skip, pause and ask if it was correct (offers SkipDB submission)"
+msgstr ""
+
+msgctxt "#32059"
+msgid "Then use IntroDB (introdb.app) when still no data"
+msgstr ""
