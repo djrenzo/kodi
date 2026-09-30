@@ -990,10 +990,10 @@ def play_widevine_url(url, license_url, subtitles=None, headers=None):
         listitem.setProperty('inputstream.adaptive.common_headers', header_str)
     listitem.setProperty('IsPlayable', 'true')
 
+    # No subtitle_offset shift here: unlike the HLS streams, the DASH timeline
+    # starts at 0 (SegmentTimeline t="0") and the SMIL VTT cues are zero-based
+    # too, so they're already in sync.
     if subtitles:
-        offset = _get_subtitle_offset()
-        if offset:
-            subtitles = [_shift_subtitle_url(u, offset, headers) for u in subtitles]
         listitem.setSubtitles(subtitles)
 
     return xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, listitem)
