@@ -1,4 +1,6 @@
 import re
+import sys
+import requests
 import xbmc
 import xbmcgui
 import xbmcaddon
@@ -23,6 +25,8 @@ from queries import (
     get_musica_items,
     get_channel_cards,
     get_channel_playback,
+    get_program_guid,
+    get_widevine_stream,
     extract_pagination_from_text,
     normalize_series_ref_id,
     PLAY_HEADERS,
@@ -35,6 +39,10 @@ from queries import (
 
 THUMB_NEW = "https://m.media-amazon.com/images/I/71yx+aFpz1L.png"
 AK = apiKeys()
+DRM_ONLY_MSG = "No se pudo reproducir este video protegido con DRM"
+
+class DrmOnlyError(Exception):
+    pass
 img_links = {
     "telecinco": "https://i.scdn.co/image/ab6761610000e5ebc66c6848262ec04bc34a0dee",
     "cuatro": "https://cloudfront-eu-central-1.images.arcpublishing.com/prisaradio/TR35WHZ6XVLEDKA7GSUK4JUWQQ.jpg"
@@ -368,7 +376,8 @@ def musica_mitele_temporadas(params):
             thumbnail=foto,
             fanart=foto,
             folder=False,
-            isPlayable=True
+            isPlayable=True,
+            context_menu=_download_context_menu(url=url4, title=titulo)
         )
 
 # DONE
@@ -680,8 +689,13 @@ def _resolve_stream(params):
 
     # dls[0] is the FairPlay-DRM manifest; swap to the plain HLS variant Kodi can play.
     picky = picky.replace('hls-fairplay.ism', 'main.ism')
+    url = f"{picky}?{hts}"
 
-    return f"{picky}?{hts}", PLAY_HEADERS, subs, bool(canal)
+    # Some VODs are published DRM-only: the clear main.ism variant is 403 on the CDN.
+    if not canal and requests.get(url, headers=PLAY_HEADERS, timeout=15).status_code != 200:
+        raise DrmOnlyError(url)
+
+    return url, PLAY_HEADERS, subs, bool(canal)
 
 # DONE
 def miniserie_mitele_reproducir(params):
@@ -692,7 +706,20 @@ def miniserie_mitele_reproducir(params):
         plugintools.play_local_file(local_video, subtitles=local_subs)
         return
 
-    url, headers, subs, is_live = _resolve_stream(params)
+    try:
+        url, headers, subs, is_live = _resolve_stream(params)
+    except DrmOnlyError as e:
+        _log(f"miniserie_mitele_reproducir: no clear stream, trying Widevine [{e}]")
+        try:
+            guid = params.get("ref_id") or get_program_guid(params.get("url"))
+            mpd, license_url, subs = get_widevine_stream(guid)
+        except Exception as e:
+            _log(f"miniserie_mitele_reproducir: Widevine resolution failed: {e}")
+            xbmcgui.Dialog().notification("Mediaset", DRM_ONLY_MSG, xbmcgui.NOTIFICATION_ERROR, 8000)
+            xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
+            return
+        plugintools.play_widevine_url(mpd, license_url, subtitles=subs, headers=PLAY_HEADERS)
+        return
 
     plugintools.play_resolved_url(
             url=url,
@@ -707,6 +734,10 @@ def download_item(params):
 
     try:
         url, headers, subs, is_live = _resolve_stream(params)
+    except DrmOnlyError as e:
+        _log(f"download_item: no clear stream available [{e}]")
+        xbmcgui.Dialog().notification("Mediaset", DRM_ONLY_MSG, xbmcgui.NOTIFICATION_ERROR, 8000)
+        return
     except Exception as e:
         _log(f"download_item: could not resolve stream: {e}")
         xbmcgui.Dialog().notification("Mediaset", "No se pudo resolver el video para descargar", xbmcgui.NOTIFICATION_ERROR)

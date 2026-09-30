@@ -967,6 +967,37 @@ def play_resolved_url(url, subtitles=None, headers=None, is_live=False):
 
     return xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, listitem)
 
+def play_widevine_url(url, license_url, subtitles=None, headers=None):
+    """Play a Widevine-protected DASH manifest through inputstream.adaptive."""
+    _log(f"play_widevine_url [{url}]")
+    import inputstreamhelper
+    if not inputstreamhelper.Helper('mpd', drm='com.widevine.alpha').check_inputstream():
+        return xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
+
+    header_str = encode_headers(headers) if headers else ''
+    listitem = xbmcgui.ListItem(path=url)
+    listitem.setMimeType('application/dash+xml')
+    listitem.setContentLookup(False)
+    listitem.setProperty('inputstream', 'inputstream.adaptive')
+    listitem.setProperty('inputstream.adaptive.manifest_type', 'mpd')
+    listitem.setProperty('inputstream.adaptive.stream_selection_type', 'fixed-res')
+    listitem.setProperty('inputstream.adaptive.license_type', 'com.widevine.alpha')
+    lic_headers = '&'.join(filter(None, [header_str, 'Content-Type=application/octet-stream']))
+    listitem.setProperty('inputstream.adaptive.license_key', f"{license_url}|{lic_headers}|R{{SSM}}|")
+    if header_str:
+        listitem.setProperty('inputstream.adaptive.manifest_headers', header_str)
+        listitem.setProperty('inputstream.adaptive.stream_headers', header_str)
+        listitem.setProperty('inputstream.adaptive.common_headers', header_str)
+    listitem.setProperty('IsPlayable', 'true')
+
+    if subtitles:
+        offset = _get_subtitle_offset()
+        if offset:
+            subtitles = [_shift_subtitle_url(u, offset, headers) for u in subtitles]
+        listitem.setSubtitles(subtitles)
+
+    return xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, listitem)
+
 
 def _sanitize_filename(title):
     # Strip Kodi label markup tags (e.g. [B], [COLOR white]) and filesystem-unsafe chars.
@@ -1007,7 +1038,7 @@ def find_downloaded_media(content_id):
     video_path = None
     subtitle_paths = []
     for f in files:
-        if f.startswith('video.'):
+        if f.startswith('video.') and not f.endswith('.part'):
             video_path = dest_dir + f
         elif f.startswith('subtitle_') and f.endswith('.vtt'):
             subtitle_paths.append(dest_dir + f)
@@ -1026,6 +1057,26 @@ def play_local_file(path, subtitles=None):
     return xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, listitem)
 
 
+def save_subtitles(dest_dir, subtitles, headers=None):
+    """Save subtitle track urls as subtitle_N.vtt next to a downloaded video."""
+    for index, sub_url in enumerate(subtitles or []):
+        try:
+            sub_resp = requests.get(sub_url, headers=headers or {}, timeout=15)
+            sub_resp.raise_for_status()
+            sub_file = xbmcvfs.File(dest_dir + f'subtitle_{index}.vtt', 'w')
+            try:
+                sub_file.write(sub_resp.content)
+            finally:
+                sub_file.close()
+        except Exception as e:
+            # Subtitles are a nice-to-have; don't fail the whole download over one.
+            _log(f"save_subtitles: could not download subtitle [{sub_url}]: {e}")
+
+
+def _download_lock_key(content_id):
+    return f"mediaset.downloading.{content_id}"
+
+
 def download_hls_stream(manifest_url, title, content_id, headers=None, subtitles=None, is_live=False):
     """
     Download an HLS stream (progressive or master playlist) to a unique subfolder
@@ -1036,13 +1087,34 @@ def download_hls_stream(manifest_url, title, content_id, headers=None, subtitles
     separate audio/subtitle tracks are not supported. Subtitle track urls, if any,
     are downloaded alongside the video so find_downloaded_media() can pick them up.
     """
+    # Kodi's home window survives across plugin invocations, so it works as a
+    # cross-process "already downloading" flag (and resets on Kodi restart).
+    home = xbmcgui.Window(10000)
+    lock_key = _download_lock_key(content_id)
+    if home.getProperty(lock_key):
+        _log(f"download_hls_stream: already downloading [{content_id}]")
+        xbmcgui.Dialog().notification(__settings__.getAddonInfo('name'), f"Ya se esta descargando: {title}", xbmcgui.NOTIFICATION_INFO)
+        return False
+    home.setProperty(lock_key, '1')
+    try:
+        return _download_hls_stream(manifest_url, title, content_id, headers, subtitles, is_live)
+    finally:
+        home.clearProperty(lock_key)
+
+
+def _download_hls_stream(manifest_url, title, content_id, headers, subtitles, is_live):
+    name = __settings__.getAddonInfo('name')
+
+    def notify_error(msg):
+        xbmcgui.Dialog().notification(name, msg, xbmcgui.NOTIFICATION_ERROR)
+
     if is_live:
-        xbmcgui.Dialog().notification(__settings__.getAddonInfo('name'), "No se pueden descargar canales en directo", xbmcgui.NOTIFICATION_ERROR)
+        notify_error("No se pueden descargar canales en directo")
         return False
 
     dest_dir = _content_download_dir(content_id)
     if not dest_dir:
-        xbmcgui.Dialog().ok(__settings__.getAddonInfo('name'), "Configura primero una carpeta de descargas en los ajustes del addon.")
+        xbmcgui.Dialog().ok(name, "Configura primero una carpeta de descargas en los ajustes del addon.")
         return False
 
     headers = headers or {}
@@ -1054,7 +1126,7 @@ def download_hls_stream(manifest_url, title, content_id, headers=None, subtitles
         text = resp.text
     except Exception as e:
         _log(f"download_hls_stream: could not fetch manifest [{manifest_url}]: {e}")
-        xbmcgui.Dialog().notification(__settings__.getAddonInfo('name'), "No se pudo descargar el manifiesto del video", xbmcgui.NOTIFICATION_ERROR)
+        notify_error("No se pudo descargar el manifiesto del video")
         return False
 
     if '#EXT-X-STREAM-INF' in text:
@@ -1065,7 +1137,7 @@ def download_hls_stream(manifest_url, title, content_id, headers=None, subtitles
 
         if not variant_url:
             _log("download_hls_stream: could not find a downloadable variant in master playlist")
-            xbmcgui.Dialog().notification(__settings__.getAddonInfo('name'), "No se encontro ningun stream descargable", xbmcgui.NOTIFICATION_ERROR)
+            notify_error("No se encontro ningun stream descargable")
             return False
 
         playlist_url = variant_url
@@ -1075,13 +1147,13 @@ def download_hls_stream(manifest_url, title, content_id, headers=None, subtitles
             text = resp.text
         except Exception as e:
             _log(f"download_hls_stream: could not fetch variant playlist [{playlist_url}]: {e}")
-            xbmcgui.Dialog().notification(__settings__.getAddonInfo('name'), "No se pudo descargar la lista de variantes", xbmcgui.NOTIFICATION_ERROR)
+            notify_error("No se pudo descargar la lista de variantes")
             return False
 
     key_match = re.search(r'#EXT-X-KEY:(?!METHOD=NONE)[^\n]*', text)
     if key_match:
         _log("download_hls_stream: stream is encrypted (#EXT-X-KEY), cannot download")
-        xbmcgui.Dialog().notification(__settings__.getAddonInfo('name'), "El video esta cifrado y no se puede descargar", xbmcgui.NOTIFICATION_ERROR)
+        notify_error("El video esta cifrado y no se puede descargar")
         return False
 
     init_match = re.search(r'#EXT-X-MAP:URI="([^"]+)"', text)
@@ -1095,11 +1167,14 @@ def download_hls_stream(manifest_url, title, content_id, headers=None, subtitles
 
     if not segment_uris:
         _log("download_hls_stream: no segments found in media playlist")
-        xbmcgui.Dialog().notification(__settings__.getAddonInfo('name'), "No se encontraron segmentos de video", xbmcgui.NOTIFICATION_ERROR)
+        notify_error("No se encontraron segmentos de video")
         return False
 
     ext = '.mp4' if init_uri else '.ts'
     dest_path = dest_dir + 'video' + ext
+    # Write to a .part file and rename at the end, so find_downloaded_media()
+    # never picks up (and plays) a copy that is still being written.
+    part_path = dest_path + '.part'
 
     if not xbmcvfs.exists(dest_dir):
         xbmcvfs.mkdirs(dest_dir)
@@ -1108,11 +1183,11 @@ def download_hls_stream(manifest_url, title, content_id, headers=None, subtitles
     # the rest of the Kodi UI, so the user can navigate away (i.e. hide it) while
     # the download keeps running, unlike the modal xbmcgui.DialogProgress.
     progress = xbmcgui.DialogProgressBG()
-    progress.create(__settings__.getAddonInfo('name'), f"Descargando {title}")
+    progress.create(name, f"Descargando {title}")
 
     ok = True
     try:
-        out_file = xbmcvfs.File(dest_path, 'w')
+        out_file = xbmcvfs.File(part_path, 'w')
         try:
             if init_uri:
                 init_resp = requests.get(init_uri, headers=headers, timeout=15)
@@ -1135,24 +1210,18 @@ def download_hls_stream(manifest_url, title, content_id, headers=None, subtitles
         progress.close()
 
     if not ok:
-        xbmcvfs.delete(dest_path)
-        xbmcgui.Dialog().notification(__settings__.getAddonInfo('name'), f"Descarga fallida: {title}", xbmcgui.NOTIFICATION_WARNING)
+        xbmcvfs.delete(part_path)
+        xbmcgui.Dialog().notification(name, f"Descarga fallida: {title}", xbmcgui.NOTIFICATION_WARNING)
         return False
 
-    for index, sub_url in enumerate(subtitles or []):
-        try:
-            sub_resp = requests.get(sub_url, headers=headers, timeout=15)
-            sub_resp.raise_for_status()
-            sub_file = xbmcvfs.File(dest_dir + f'subtitle_{index}.vtt', 'w')
-            try:
-                sub_file.write(sub_resp.content)
-            finally:
-                sub_file.close()
-        except Exception as e:
-            # Subtitles are a nice-to-have; don't fail the whole download over one.
-            _log(f"download_hls_stream: could not download subtitle [{sub_url}]: {e}")
+    save_subtitles(dest_dir, subtitles, headers)
 
-    xbmcgui.Dialog().notification(__settings__.getAddonInfo('name'), f"Descarga completada: {title}", xbmcgui.NOTIFICATION_INFO)
+    if not xbmcvfs.rename(part_path, dest_path):
+        _log(f"download_hls_stream: could not rename [{part_path}] -> [{dest_path}]")
+        xbmcvfs.delete(part_path)
+        return False
+
+    xbmcgui.Dialog().notification(name, f"Descarga completada: {title}", xbmcgui.NOTIFICATION_INFO)
     return True
 
 

@@ -1,5 +1,7 @@
 import re
 import html
+import uuid
+import base64
 import requests
 from urllib.parse import urlencode
 from json import dumps
@@ -227,6 +229,65 @@ def get_hts(payload):
 
 def gen_play_headers(headers):
     return "&".join([f"{x}={y}" for x,y in headers.items()])
+
+## WIDEVINE (DRM-only VODs, same flow as the mediasetinfinity.es web player) ##
+
+OTT_SERVICE_LAYER = "https://services-ott-prod-fe.mediaset.net/esp/"
+WIDEVINE_LICENSE = "https://widevine.entitlement.theplatform.eu/wv/web/ModularDrm/getRawWidevineLicense"
+OTT_HEADERS = {
+    "User-Agent": PLAY_HEADERS["user-agent"],
+    "Origin": "https://www.mediasetinfinity.es",
+    "Referer": "https://www.mediasetinfinity.es/",
+    }
+
+def get_program_guid(url):
+    """Scrape the ThePlatform program guid (e.g. M600067200000700) from a video page."""
+    url = url.replace("www.mitele.es", "www.mediasetinfinity.es")
+    text = requests.get(url, headers=HEADERS_SCRAPE, timeout=15).text
+    match = re.search(r'link-ott-prod\.mediaset\.net/finder/esp/(\w+)', text)
+    return match.group(1) if match else None
+
+def get_widevine_stream(guid):
+    """Return (mpd_url, license_url, subtitle_urls) for a program guid."""
+    login = requests.post(
+        OTT_SERVICE_LAYER + "idm/v3.0/anonymous/login",
+        headers=OTT_HEADERS,
+        json={"client_id": str(uuid.uuid4()), "appName": "web//mediasetinfinity-web"},
+        timeout=15).json()["response"]
+    be_token = login["beToken"]
+
+    check = requests.post(
+        OTT_SERVICE_LAYER + "playback/v3.0/check",
+        params={"sid": login["sid"]},
+        headers={**OTT_HEADERS, "Authorization": f"Bearer {be_token}"},
+        json={"contentId": guid, "streamType": "VOD", "delivery": "Streaming"},
+        timeout=15).json()
+    selector = check["response"]["mediaSelector"]
+
+    smil_params = {"format": "SMIL", "auto": "true", "balance": "true"}
+    for key in ("formats", "assetTypes", "tracking", "delivery", "publicUrl"):
+        if selector.get(key) is not None:
+            smil_params[key] = selector[key]
+    basic = base64.b64encode(f":{be_token}".encode()).decode()
+    smil = requests.get(
+        selector["url"], params=smil_params,
+        headers={**OTT_HEADERS, "Authorization": f"Basic {basic}"},
+        timeout=15).text
+
+    mpd = re.search(r'<ref src="([^"]+)"', smil)
+    tracking = re.search(r'name="trackingData" value="([^"]+)"', smil)
+    if not mpd or not tracking:
+        raise ValueError(f"Unexpected SMIL response for {guid}: {smil[:300]}")
+    tracking = dict(x.split("=", 1) for x in tracking.group(1).split("|") if "=" in x)
+
+    license_url = WIDEVINE_LICENSE + "?" + urlencode({
+        "releasePid": tracking["pid"],
+        "account": f"http://access.auth.theplatform.com/data/Account/{tracking['aid']}",
+        "schema": "1.0",
+        "token": be_token,
+        })
+    subs = re.findall(r'<textstream src="([^"]+)"', smil)
+    return html.unescape(mpd.group(1)), license_url, subs
 
 class apiKeys:
   def __init__(self):
