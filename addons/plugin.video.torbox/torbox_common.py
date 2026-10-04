@@ -22,7 +22,7 @@ ADDON_PATH = xbmcvfs.translatePath(ADDON.getAddonInfo('path'))
 PROFILE_PATH = xbmcvfs.translatePath(ADDON.getAddonInfo('profile'))
 HANDLE = int(sys.argv[1])
 BASE_URL = sys.argv[0]
-MAX_ACCOUNTS = 3
+MAX_ACCOUNTS = 5
 APP_NAME = 'TorBox'
 
 PROVIDER_SETTING_AIOSTREAMS_URL = 'aiostreams_url'

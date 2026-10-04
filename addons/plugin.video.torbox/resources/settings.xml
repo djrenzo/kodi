@@ -21,6 +21,20 @@
     <setting id="account3_username" type="text" label="Username" default=""/>
     <setting id="account3_password" type="text" label="Password" option="hidden" default=""/>
   </category>
+  <category label="Account 4">
+    <setting id="account4_enabled" type="bool" label="Enable Account 4" default="false"/>
+    <setting id="account4_name" type="text" label="Display Name" default="TorBox Account 4"/>
+    <setting id="account4_url" type="text" label="WebDAV URL" default="https://webdav.torbox.app"/>
+    <setting id="account4_username" type="text" label="Username" default=""/>
+    <setting id="account4_password" type="text" label="Password" option="hidden" default=""/>
+  </category>
+  <category label="Account 5">
+    <setting id="account5_enabled" type="bool" label="Enable Account 5" default="false"/>
+    <setting id="account5_name" type="text" label="Display Name" default="TorBox Account 5"/>
+    <setting id="account5_url" type="text" label="WebDAV URL" default="https://webdav.torbox.app"/>
+    <setting id="account5_username" type="text" label="Username" default=""/>
+    <setting id="account5_password" type="text" label="Password" option="hidden" default=""/>
+  </category>
   <category label="Library">
     <setting id="library_enabled" type="bool" label="Enable library integration" default="true"/>
     <setting id="library_scraper" type="enum" label="Metadata scraper" values="TheMovieDB|TheTVDB" default="0"/>

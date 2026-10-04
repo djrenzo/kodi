@@ -54,7 +54,7 @@ This document captures the current architecture, behavior, conventions, and impl
 ### Settings
 Settings are in `resources/settings.xml`.
 Key groups:
-- Account slots 1..3 (`account{n}_enabled`, `account{n}_url`, `account{n}_username`, `account{n}_password`, `account{n}_name`)
+- Account slots 1..5 (`MAX_ACCOUNTS` in `torbox_common.py`; `account{n}_enabled`, `account{n}_url`, `account{n}_username`, `account{n}_password`, `account{n}_name`)
 - Library settings (`library_path`, `library_source_created`, etc.)
 - Playback/UI settings (`show_hidden`)
 
