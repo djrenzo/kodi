@@ -428,6 +428,18 @@ def extract_episode_info(filename):
     return None, None
 
 
+def extract_bare_episode(filename):
+    """Episode number from names that carry no season, e.g. 'Show.2019.E02.1080p' or 'Show - E21 [BD]'."""
+    match = re.search(r'(?<![A-Za-z0-9])(?:Episode[ ._-]?|EP?)(\d{1,3})(?!\d)', filename, re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
+def guess_season(name):
+    """Season hinted by a folder name ('S01', 'Season 2'), or None."""
+    match = re.search(r'\b(?:S|Season[ ._-]?)(\d{1,2})\b', name or '', re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
 def get_accounts() -> List[Account]:
     accounts: List[Account] = []
     for idx in range(1, MAX_ACCOUNTS + 1):

@@ -256,8 +256,8 @@ def list_directory(account_index, remote_path, is_library_root=False):
             override = overrides.get(name, {})
             thumb_url = ''
             plot = ''
-            if override:
-                clean_title = override.get('title', name)
+            if override.get('title'):
+                clean_title = override['title']
                 year = override.get('year')
                 tvdb_id = override.get('tvdb_id', '')
                 tmdb_id = override.get('tmdb_id', '')
@@ -1127,6 +1127,8 @@ def set_override(folder_name, account_index):
             entry['plot'] = existing['plot']
     if existing.get('subs'):
         entry['subs'] = existing['subs']
+    if existing.get('season') is not None:
+        entry['season'] = existing['season']
 
     overrides[folder_name] = entry
     save_overrides(overrides)

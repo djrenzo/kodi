@@ -5,7 +5,7 @@ import xbmc
 import xbmcgui
 import xbmcvfs
 
-from torbox_common import ADDON, APP_NAME, extract_episode_info, get_account, load_overrides, log, make_auth_header
+from torbox_common import ADDON, APP_NAME, get_account, load_overrides, log, make_auth_header
 from torbox_http import download as download_text
 from torbox_library import (
     episode_basename,
@@ -14,6 +14,7 @@ from torbox_library import (
     join_path,
     movie_folder_name,
     normalize_collection_path,
+    numbered_episodes,
     resolve_media_info,
     walk_webdav,
     write_movie_nfo,
@@ -72,7 +73,7 @@ def _existing_size(path):
         return -1
 
 
-def _plan_downloads(account, info, remote_path, download_root):
+def _plan_downloads(account, raw_name, overrides, info, remote_path, download_root):
     """Mirror the STRM export layout: returns (folder, [(webdav item, dest path)])."""
     ext_of = lambda item: os.path.splitext(item['name'])[1].lower()
 
@@ -86,12 +87,8 @@ def _plan_downloads(account, info, remote_path, download_root):
 
     folder = join_path(get_media_library_root(download_root, 'tvshow'), info['title'])
     jobs = []
-    for episode in walk_webdav(account, remote_path):
-        if ext_of(episode) == '.strm':
-            continue
-        season, episode_no = extract_episode_info(episode['name'])
-        if season is None:
-            continue
+    videos = [item for item in walk_webdav(account, remote_path) if ext_of(item) != '.strm']
+    for episode, season, episode_no in numbered_episodes(raw_name, videos, overrides):
         basename = episode_basename(info['title'], season, episode_no)
         jobs.append((episode, join_path(folder, basename + ext_of(episode))))
     return folder, jobs
@@ -175,8 +172,9 @@ def download_library_item(account_index, folder_name, remote_path):
     if not remote_path:
         return
 
-    info = resolve_media_info(folder_name, load_overrides())
-    folder, jobs = _plan_downloads(account, info, remote_path, download_root)
+    overrides = load_overrides()
+    info = resolve_media_info(folder_name, overrides)
+    folder, jobs = _plan_downloads(account, folder_name, overrides, info, remote_path, download_root)
 
     if not jobs:
         xbmcgui.Dialog().ok(APP_NAME, DIALOG_DOWNLOAD_NO_VIDEOS.format(info['title']))

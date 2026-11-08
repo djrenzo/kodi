@@ -72,6 +72,7 @@ DIALOG_SUBS_BAD_RESULT = 'Subtitle result is missing a download URL.'
 DIALOG_SUBS_DOWNLOAD_FAILED = 'Failed to download subtitle.\nCheck the log for details.'
 
 DIALOG_LIBRARY_PATH_NOT_CONFIGURED = 'Library path not configured'
+DIALOG_ASK_SEASON = '{} episode file(s) in "{}" have no season number. Season:'
 DIALOG_LIBRARY_EXPORT_DONE = 'Export complete\n\n{} STRM files generated'
 DIALOG_LIBRARY_SOURCE_ADDED = (
     'TorBox Library source has been added.\n\n'

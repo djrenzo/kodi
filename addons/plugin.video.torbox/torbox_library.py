@@ -14,13 +14,17 @@ from torbox_common import (
     VIDEO_EXTS,
     build_url,
     clean_show_name,
+    extract_bare_episode,
     extract_episode_info,
     get_account,
     get_accounts,
+    guess_season,
     load_overrides,
     log,
+    save_overrides,
 )
 from torbox_text import (
+    DIALOG_ASK_SEASON,
     DIALOG_CLEANUP_CONFIRM,
     DIALOG_CLEANUP_DONE,
     DIALOG_CLEANUP_NOTHING,
@@ -195,8 +199,8 @@ def get_library_folder_for(folder_name):
     override = overrides.get(folder_name, {})
     media_type = override.get('type', 'tvshow')
 
-    if override:
-        clean_title = override.get('title', folder_name)
+    if override.get('title'):
+        clean_title = override['title']
         year = override.get('year')
     else:
         clean_title, year = clean_show_name(folder_name)
@@ -214,8 +218,8 @@ def resolve_media_info(raw_name, overrides):
     """Return title/year/ids/type for a WebDAV folder, preferring its manual override."""
     override = overrides.get(raw_name, {})
 
-    if override:
-        clean_title = override.get('title', raw_name)
+    if override.get('title'):
+        clean_title = override['title']
         year = override.get('year')
     else:
         clean_title, year = clean_show_name(raw_name)
@@ -237,6 +241,58 @@ def movie_folder_name(title, year):
 
 def episode_basename(title, season, episode_no):
     return '{}.S{:02d}E{:02d}'.format(title, season, episode_no)
+
+
+def _ask_season(raw_name, missing_count, overrides):
+    """Season for episode files that only carry an episode number. Remembered per folder in
+    the overrides so later exports don't ask again. Returns None if the user cancels."""
+    override = overrides.get(raw_name, {})
+    if override.get('season') is not None:
+        return int(override['season'])
+
+    default = guess_season(raw_name) or 1
+    value = xbmcgui.Dialog().input(
+        DIALOG_ASK_SEASON.format(missing_count, raw_name[:60]),
+        defaultt=str(default),
+        type=xbmcgui.INPUT_NUMERIC,
+    )
+    try:
+        season = int(value)
+    except (TypeError, ValueError):
+        return None
+
+    # Reload so we don't overwrite edits saved since the caller loaded its copy.
+    latest = load_overrides()
+    entry = latest.get(raw_name, {})
+    entry['season'] = season
+    latest[raw_name] = entry
+    save_overrides(latest)
+    overrides[raw_name] = entry
+    return season
+
+
+def numbered_episodes(raw_name, episodes, overrides):
+    """Return [(item, season, episode_no)] for the files that can be numbered.
+    Files with only an episode number (e.g. 'E02') get a season asked from the user."""
+    numbered = []
+    bare = []
+    for item in episodes:
+        season, episode_no = extract_episode_info(item['name'])
+        if season is not None:
+            numbered.append((item, season, episode_no))
+            continue
+        episode_no = extract_bare_episode(item['name'])
+        if episode_no is not None:
+            bare.append((item, episode_no))
+
+    if bare:
+        season = _ask_season(raw_name, len(bare), overrides)
+        if season is None:
+            log('No season given for {}; skipped {} episode(s)'.format(raw_name, len(bare)), xbmc.LOGWARNING)
+        else:
+            numbered.extend((item, season, episode_no) for item, episode_no in bare)
+
+    return numbered
 
 
 def normalize_collection_path(child_path):
@@ -293,11 +349,7 @@ def _export_collection(account, account_index, raw_name, child_path, overrides, 
     write_tvshow_nfo(show_folder, clean_title, tvdb_id, tmdb_id, imdb_id)
 
     created = 0
-    for episode in walk_webdav(account, normalized_path):
-        season, episode_no = extract_episode_info(episode['name'])
-        if season is None:
-            continue
-
+    for episode, season, episode_no in numbered_episodes(raw_name, walk_webdav(account, normalized_path), overrides):
         strm_name = '{}.strm'.format(episode_basename(clean_title, season, episode_no))
         strm_path = join_path(show_folder, strm_name)
         plugin_url = build_url(
