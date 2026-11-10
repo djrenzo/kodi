@@ -813,32 +813,42 @@ def _get_subtitle_offset():
     except Exception:
         return 0.0
 
-def _shift_subtitle_url(url, offset_seconds, headers=None):
+def _localize_subtitle(url, offset_seconds=0, headers=None):
     """
-    Download a WebVTT subtitle file and shift its cue timestamps by offset_seconds,
-    returning a local file path. inputstream.adaptive presents a timeline rebased
-    to 0 for this addon's HLS streams, but the VTT cues are authored against the
-    stream's original (non-zero-based) timestamps, so they need a fixed correction
-    to land in sync; see resources/settings.xml "subtitle_offset".
+    Download a WebVTT subtitle file (optionally shifting its cue timestamps by
+    offset_seconds) and return a local file path, so Kodi always attaches a
+    complete file on disk instead of fetching a remote URL itself.
+
+    The offset is needed for this addon's HLS streams: inputstream.adaptive
+    presents a timeline rebased to 0, but the VTT cues are authored against the
+    stream's original (non-zero-based) timestamps; see resources/settings.xml
+    "subtitle_offset". The Widevine DASH streams need no shift.
+
+    The filename comes from the url without its query string (which holds
+    per-request tokens), so replaying an episode overwrites the same file
+    instead of piling up new ones. Falls back to the remote url on failure.
     """
     try:
         req = urllib.request.Request(url, headers=headers or {})
         with urllib.request.urlopen(req, timeout=15) as resp:
             text = resp.read().decode('utf-8', errors='replace')
     except Exception as e:
-        _log(f"_shift_subtitle_url: download failed for [{url}]: {e}")
+        _log(f"_localize_subtitle: download failed for [{url}]: {e}")
         return url
 
-    shifted = _shift_vtt_content(text, offset_seconds)
+    if offset_seconds:
+        text = _shift_vtt_content(text, offset_seconds)
 
     temp_dir = xbmcvfs.translatePath('special://temp/plugin.video.mediaset/')
     xbmcvfs.mkdirs(temp_dir)
-    local_path = os.path.join(temp_dir, f"sub_{abs(hash(url))}.vtt")
+    key = f"{url.split('?', 1)[0]}|{offset_seconds}"
+    digest = hashlib.sha1(key.encode('utf-8')).hexdigest()[:16]
+    local_path = os.path.join(temp_dir, f"sub_{digest}.vtt")
     try:
         with open(local_path, 'w', encoding='utf-8') as f:
-            f.write(shifted)
+            f.write(text)
     except Exception as e:
-        _log(f"_shift_subtitle_url: could not write [{local_path}]: {e}")
+        _log(f"_localize_subtitle: could not write [{local_path}]: {e}")
         return url
 
     return local_path
@@ -893,6 +903,41 @@ def _pick_highest_variant_url(master_url, headers=None):
         return None
 
     return urllib.parse.urljoin(master_url, best_uri)
+
+def _reattach_subtitles_on_resume(subtitles, timeout=60):
+    """
+    When Kodi resumes a stream from a saved position, external subtitles attached
+    via ListItem.setSubtitles() show as loaded/selected but never render. Loading
+    them again through the running player, once the resume seek is done, makes
+    them display. Fresh starts (position near 0) work already and are left alone.
+    """
+    if not subtitles:
+        return
+    player = xbmc.Player()
+    monitor = xbmc.Monitor()
+
+    waited = 0.0
+    while not player.isPlayingVideo():
+        if monitor.waitForAbort(0.5):
+            return
+        waited += 0.5
+        if waited >= timeout:
+            return
+
+    # Let Kodi finish the resume seek before checking the position.
+    if monitor.waitForAbort(2) or not player.isPlayingVideo():
+        return
+    try:
+        position = player.getTime()
+    except RuntimeError:
+        return
+    if position < 15:
+        return
+
+    _log(f"_reattach_subtitles_on_resume: resumed at {position:.0f}s, reloading subtitles")
+    for sub in subtitles:
+        player.setSubtitles(sub)
+    player.showSubtitles(True)
 
 def play_resolved_url(url, subtitles=None, headers=None, is_live=False):
     """
@@ -961,11 +1006,12 @@ def play_resolved_url(url, subtitles=None, headers=None, is_live=False):
     # Add subtitles properly with names
     if subtitles:
         offset = _get_subtitle_offset()
-        if offset:
-            subtitles = [_shift_subtitle_url(u, offset, headers) for u in subtitles]
+        subtitles = [_localize_subtitle(u, offset, headers) for u in subtitles]
         listitem.setSubtitles(subtitles)
 
-    return xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, listitem)
+    result = xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, listitem)
+    _reattach_subtitles_on_resume(subtitles)
+    return result
 
 def play_widevine_url(url, license_url, subtitles=None, headers=None):
     """Play a Widevine-protected DASH manifest through inputstream.adaptive."""
@@ -994,9 +1040,12 @@ def play_widevine_url(url, license_url, subtitles=None, headers=None):
     # starts at 0 (SegmentTimeline t="0") and the SMIL VTT cues are zero-based
     # too, so they're already in sync.
     if subtitles:
+        subtitles = [_localize_subtitle(u, 0, headers) for u in subtitles]
         listitem.setSubtitles(subtitles)
 
-    return xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, listitem)
+    result = xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, listitem)
+    _reattach_subtitles_on_resume(subtitles)
+    return result
 
 
 def _sanitize_filename(title):
