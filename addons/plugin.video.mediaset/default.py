@@ -59,6 +59,16 @@ def _download_context_menu(url="", extra="", ref_id="", title=""):
         )
     )]
 
+def _episode_context_menu(url="", ref_id="", title=""):
+    # PlayMedia (not RunPlugin) so Kodi hands us a handle for setResolvedUrl.
+    widevine = (
+        "Play (force Widevine)",
+        "PlayMedia(%s)" % plugintools.build_plugin_url(
+            action="play_widevine", title=title, url=url, ref_id=ref_id
+        )
+    )
+    return [widevine] + _download_context_menu(url=url, ref_id=ref_id, title=title)
+
 def run():
     _log("Running")
     # plugintools.set_view(plugintools.LIST)
@@ -550,7 +560,7 @@ def show_episodes(params):
             fanart=thumbnail,
             folder=False,
             isPlayable=True,
-            context_menu=_download_context_menu(url=url, ref_id=ref_id, title=title)
+            context_menu=_episode_context_menu(url=url, ref_id=ref_id, title=title)
         )
     
     if pageInfo.get("hasNextPage"):
@@ -606,7 +616,7 @@ def _add_miniserie_episode(node):
         fanart=thumbnail_url,
         folder=False,
         isPlayable=True,
-        context_menu=_download_context_menu(url=link, title=f"{subtitle} {title}".strip())
+        context_menu=_episode_context_menu(url=link, title=f"{subtitle} {title}".strip())
     )
 
 # DONE
@@ -697,6 +707,22 @@ def _resolve_stream(params):
 
     return url, PLAY_HEADERS, subs, bool(canal)
 
+def _play_widevine(params):
+    try:
+        guid = params.get("ref_id") or get_program_guid(params.get("url"))
+        mpd, license_url, subs = get_widevine_stream(guid)
+    except Exception as e:
+        _log(f"_play_widevine: Widevine resolution failed: {e}")
+        xbmcgui.Dialog().notification("Mediaset", DRM_ONLY_MSG, xbmcgui.NOTIFICATION_ERROR, 8000)
+        xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
+        return
+    plugintools.play_widevine_url(mpd, license_url, subtitles=subs, headers=PLAY_HEADERS)
+
+def play_widevine(params):
+    """Context menu action: play the Widevine DASH stream even if a clear HLS one exists."""
+    _log("play_widevine (forced)")
+    _play_widevine(params)
+
 # DONE
 def miniserie_mitele_reproducir(params):
     content_id = plugintools.content_id_for(params.get("url"), params.get("ref_id"))
@@ -710,15 +736,7 @@ def miniserie_mitele_reproducir(params):
         url, headers, subs, is_live = _resolve_stream(params)
     except DrmOnlyError as e:
         _log(f"miniserie_mitele_reproducir: no clear stream, trying Widevine [{e}]")
-        try:
-            guid = params.get("ref_id") or get_program_guid(params.get("url"))
-            mpd, license_url, subs = get_widevine_stream(guid)
-        except Exception as e:
-            _log(f"miniserie_mitele_reproducir: Widevine resolution failed: {e}")
-            xbmcgui.Dialog().notification("Mediaset", DRM_ONLY_MSG, xbmcgui.NOTIFICATION_ERROR, 8000)
-            xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
-            return
-        plugintools.play_widevine_url(mpd, license_url, subtitles=subs, headers=PLAY_HEADERS)
+        _play_widevine(params)
         return
 
     plugintools.play_resolved_url(
