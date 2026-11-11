@@ -199,6 +199,22 @@ def play(params):
   if stype == 'u7d':
     play_item.setProperty('inputstream.adaptive.play_timeshift_buffer', 'true')
 
+  if stype == 'tv':
+    # Kodi treats live streams as "realtime": whenever its audio queue drops
+    # under 5% it slows the clock by 5%, and restores it above 10%. Playing
+    # right at inputstream.adaptive's default live edge (16s behind) leaves too
+    # little headroom, so the queue keeps draining and refilling and the sound
+    # audibly slows down/speeds up. Starting further behind live keeps it full.
+    try:
+      live_delay = int(addon.getSetting('live_delay') or 0)
+    except ValueError:
+      live_delay = 0
+    if live_delay >= 16:
+      if kodi_version >= 22:
+        play_item.setProperty('inputstream.adaptive.manifest_config', '{{"live_delay": {}}}'.format(live_delay))
+      else:
+        play_item.setProperty('inputstream.adaptive.live_delay', str(live_delay))
+
   if kodi_version < 19:
     play_item.setProperty('inputstreamaddon', 'inputstream.adaptive')
   else:

@@ -8,6 +8,7 @@
         <setting label="30042" type="number" id="expdays" default="30"/>
         <setting id="use_ttml2ssa" type="bool" label="$ADDON[script.module.ttml2ssa 32202]" default="false"/>
         <setting id="ssa_settings" type="action" label="$ADDON[script.module.ttml2ssa 32201]" option="close" action="Addon.OpenSettings(script.module.ttml2ssa)" visible="eq(-1,true)" subsetting="true"/>
+        <setting id="live_delay" type="slider" label="Retraso en directo (segundos). Súbelo si el sonido se acelera/ralentiza" default="30" range="16,2,90" option="int"/>
         <setting label="30019" type="action" id="is_settings" action="Addon.OpenSettings(inputstream.adaptive)" enable="System.HasAddon(inputstream.adaptive)" option="close"/>
         <setting id="proxy_address" type="text" label="" value="" default="" visible="false"/>
     </category>

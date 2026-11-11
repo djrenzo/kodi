@@ -836,8 +836,10 @@ def _localize_subtitle(url, offset_seconds=0, headers=None):
         _log(f"_localize_subtitle: download failed for [{url}]: {e}")
         return url
 
-    if offset_seconds:
-        text = _shift_vtt_content(text, offset_seconds)
+    # Always rewrite the cue times, even with no offset: Mediaset writes hours
+    # as one digit ("1:00:00.240") and Kodi's WebVTT parser only accepts two
+    # ("01:00:00.240"), so it silently drops every cue after the first hour.
+    text = _shift_vtt_content(text, offset_seconds)
 
     temp_dir = xbmcvfs.translatePath('special://temp/plugin.video.mediaset/')
     xbmcvfs.mkdirs(temp_dir)
@@ -845,7 +847,9 @@ def _localize_subtitle(url, offset_seconds=0, headers=None):
     digest = hashlib.sha1(key.encode('utf-8')).hexdigest()[:16]
     local_path = os.path.join(temp_dir, f"sub_{digest}.vtt")
     try:
-        with open(local_path, 'w', encoding='utf-8') as f:
+        # newline='' keeps the file's own CRLF line endings; Windows text mode
+        # would turn them into CR CR LF, which Kodi reads as extra blank lines.
+        with open(local_path, 'w', encoding='utf-8', newline='') as f:
             f.write(text)
     except Exception as e:
         _log(f"_localize_subtitle: could not write [{local_path}]: {e}")
@@ -1112,9 +1116,11 @@ def save_subtitles(dest_dir, subtitles, headers=None):
         try:
             sub_resp = requests.get(sub_url, headers=headers or {}, timeout=15)
             sub_resp.raise_for_status()
+            # Normalize cue times to two-digit hours (see _localize_subtitle).
+            text = _shift_vtt_content(sub_resp.content.decode('utf-8', errors='replace'), 0)
             sub_file = xbmcvfs.File(dest_dir + f'subtitle_{index}.vtt', 'w')
             try:
-                sub_file.write(sub_resp.content)
+                sub_file.write(text.encode('utf-8'))
             finally:
                 sub_file.close()
         except Exception as e:

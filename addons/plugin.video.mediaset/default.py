@@ -702,10 +702,56 @@ def _resolve_stream(params):
     url = f"{picky}?{hts}"
 
     # Some VODs are published DRM-only: the clear main.ism variant is 403 on the CDN.
-    if not canal and requests.get(url, headers=PLAY_HEADERS, timeout=15).status_code != 200:
+    # Others are only partly there: the playlists load, but the higher-quality
+    # segments are 403 from some point on (e.g. 1080p stops ~27 min in), which
+    # breaks playback and subtitles mid-episode. The Widevine copy is complete.
+    if not canal and not _clear_stream_complete(url, PLAY_HEADERS):
         raise DrmOnlyError(url)
 
     return url, PLAY_HEADERS, subs, bool(canal)
+
+_VARIANT_RE = re.compile(r'#EXT-X-STREAM-INF:[^\n]*BANDWIDTH=(\d+)[^\n]*\n([^#\n][^\n]*)')
+
+def _clear_stream_complete(master_url, headers, samples=10):
+    """True if the clear HLS master loads and its best variant's segments are
+    reachable across the whole episode (checked at evenly spaced points)."""
+    from concurrent.futures import ThreadPoolExecutor
+    from urllib.parse import urljoin
+
+    master = requests.get(master_url, headers=headers, timeout=15)
+    if master.status_code != 200:
+        return False
+    variants = [(int(bw), uri.strip()) for bw, uri in _VARIANT_RE.findall(master.text)]
+    if not variants:
+        return True
+    variant_url = urljoin(master_url, max(variants)[1])
+
+    try:
+        playlist = requests.get(variant_url, headers=headers, timeout=15)
+        if playlist.status_code != 200:
+            return False
+        segments = [l.strip() for l in playlist.text.splitlines() if l.strip() and not l.startswith('#')]
+        if not segments:
+            return False
+        last = len(segments) - 1
+        picks = sorted({round(last * i / (samples - 1)) for i in range(samples)})
+
+        def ok(index):
+            seg_url = urljoin(variant_url, segments[index])
+            return requests.head(seg_url, headers=headers, timeout=10).status_code == 200
+
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            results = list(pool.map(ok, picks))
+    except Exception as e:
+        # Network hiccup while probing: don't block the clear stream over it.
+        _log(f"_clear_stream_complete: probe failed, assuming complete: {e}")
+        return True
+
+    missing = [picks[i] + 1 for i, good in enumerate(results) if not good]
+    if missing:
+        _log(f"_clear_stream_complete: segments {missing} of {len(segments)} unavailable")
+        return False
+    return True
 
 def _play_widevine(params):
     try:
