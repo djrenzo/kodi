@@ -27,7 +27,7 @@
 </addon>
 <addon
 	id="plugin.video.mediaset"
-  version="1.0.18"
+  version="1.0.19"
   name="Mediaset"
   provider-name="equipo tvdidi">
 
@@ -59,7 +59,7 @@
 </addon>
 <addon id="plugin.video.movistarplus"
        name="Movistar+"
-       version="0.11.22"
+       version="0.11.23"
        provider-name="djrenzo">
   <requires>
   <!--- <import addon="xbmc.python" version="2.25.0"/> -->
