@@ -23,7 +23,9 @@ CONTEXT_REFRESH_LIBRARY = 'Refresh library'
 CONTEXT_EXPORT_SINGLE_ITEM = 'Export this item to library'
 CONTEXT_DOWNLOAD_ITEM = 'Download'
 
-LABEL_MANUAL_ITEM = '{} [COLOR gray](manual)[/COLOR]'
+LABEL_MEDIA_AUTO = '[COLOR springgreen]{} · auto |[/COLOR] {}'
+LABEL_MEDIA_MANUAL = '[COLOR yellow]{} · manual |[/COLOR] {}'
+LABEL_MEDIA_UNKNOWN = '[COLOR red]unknown |[/COLOR] {}'
 LABEL_GRAY_ITEM = '[COLOR gray]{}[/COLOR]'
 
 NOTIFY_ACCOUNT_NOT_FOUND = 'Account not found'

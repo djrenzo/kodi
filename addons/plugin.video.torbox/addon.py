@@ -58,7 +58,9 @@ from torbox_text import (
     DIALOG_SET_TVDB,
     DIALOG_SET_YEAR,
     LABEL_GRAY_ITEM,
-    LABEL_MANUAL_ITEM,
+    LABEL_MEDIA_AUTO,
+    LABEL_MEDIA_MANUAL,
+    LABEL_MEDIA_UNKNOWN,
     MENU_ACCOUNT_BROWSE,
     MENU_ACCOUNT_EXPORT,
     MENU_ACCOUNT_IDENTIFY,
@@ -290,18 +292,20 @@ def list_directory(account_index, remote_path, is_library_root=False):
                     display_label = display_label + ' {' + tvdb_id + '}'
                 if imdb_id:
                     display_label = '{} <{}>'.format(display_label, imdb_id)
-                if is_manual(override):
-                    display_label = LABEL_MANUAL_ITEM.format(display_label)
+                label_format = LABEL_MEDIA_MANUAL if is_manual(override) else LABEL_MEDIA_AUTO
+                display_label = label_format.format(media_type, display_label)
             elif show_unclassified:
                 clean_title = name
                 media_type = 'video'
-                display_label = name
+                display_label = LABEL_MEDIA_UNKNOWN.format(name)
             else:
                 continue
 
             li = xbmcgui.ListItem(label=display_label)
+            # Skins show the 'title' infolabel rather than the label, so it carries the full
+            # label (type, source, year and ids) too.
             info = {
-                'title': clean_title,
+                'title': display_label,
                 'tvshowtitle': clean_title,
                 'originaltitle': clean_title,
                 'sorttitle': clean_title,
