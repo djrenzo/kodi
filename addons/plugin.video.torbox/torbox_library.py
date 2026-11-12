@@ -106,6 +106,15 @@ def join_path(base, *parts):
     return path
 
 
+def dir_exists(path):
+    """xbmcvfs.exists only checks a directory when the path ends with a separator;
+    without one it can report False for folders (SMB/NFS, Android storage)."""
+    if not path:
+        return False
+    sep = '/' if '://' in path else os.sep
+    return xbmcvfs.exists(path if path.endswith(('/', '\\')) else path + sep)
+
+
 def write_text_file(path, content):
     folder = os.path.dirname(path)
     if not xbmcvfs.exists(folder):
@@ -211,7 +220,7 @@ def get_library_folder_for(folder_name):
     media_root = get_media_library_root(library_root, info['media_type'])
     folder = join_path(media_root, library_folder_name(info))
     legacy = join_path(media_root, legacy_folder_name(info))
-    if not xbmcvfs.exists(folder) and xbmcvfs.exists(legacy):
+    if not dir_exists(folder) and dir_exists(legacy):
         return legacy  # exported before folders carried an id and not migrated yet
     return folder
 
@@ -274,7 +283,7 @@ def migrate_legacy_folder(media_root, info, rename_prefix=None):
     Returns the folder to use."""
     folder = join_path(media_root, library_folder_name(info))
     legacy = join_path(media_root, legacy_folder_name(info))
-    if legacy == folder or xbmcvfs.exists(folder) or not xbmcvfs.exists(legacy):
+    if legacy == folder or dir_exists(folder) or not dir_exists(legacy):
         return folder
     if not xbmcvfs.rename(legacy, folder):
         log('Could not rename "{}" to "{}"'.format(legacy, folder), xbmc.LOGWARNING)
@@ -389,15 +398,20 @@ def _mark_exported(account_index, raw_name, info, folder, files):
     _save_export_log(data)
 
 
-def is_exported(export_log, account_index, raw_name, overrides):
-    """True when the folder was exported under its current identification and its
-    library folder still exists."""
+def export_status(export_log, account_index, raw_name, overrides):
+    """None when the folder was exported under its current identification and its library
+    folder still exists; otherwise the reason it needs exporting."""
     entry = export_log.get(str(account_index), {}).get(raw_name)
-    if not entry or not overrides.get(raw_name, {}).get('title'):
-        return False
+    if not entry:
+        return 'not in export log'
+    if not overrides.get(raw_name, {}).get('title'):
+        return 'not identified'
     if entry.get('identity') != _identity(resolve_media_info(raw_name, overrides)):
-        return False
-    return bool(entry.get('folder')) and xbmcvfs.exists(entry['folder'])
+        return 'identification changed'
+    if not dir_exists(entry.get('folder')):
+        return 'library folder missing'
+    return None
+
 
 
 def normalize_collection_path(child_path):
@@ -512,8 +526,16 @@ def export_library(account_index):
     if only_new:
         export_log = load_export_log()
         overrides = load_overrides()
-        remaining = [f for f in folders if not is_exported(export_log, account_index, f['name'], overrides)]
+        remaining = []
+        reasons = {}
+        for folder in folders:
+            reason = export_status(export_log, account_index, folder['name'], overrides)
+            if reason:
+                remaining.append(folder)
+                reasons[reason] = reasons.get(reason, 0) + 1
         already = len(folders) - len(remaining)
+        log('Export (only new): {} already exported, to export: {}'.format(
+            already, ', '.join('{} {}'.format(n, r) for r, n in sorted(reasons.items())) or 'none'))
         folders = remaining
         if not folders:
             xbmcgui.Dialog().ok(APP_NAME, DIALOG_EXPORT_NOTHING_NEW)
