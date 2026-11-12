@@ -81,6 +81,9 @@ Matches are stored in `overrides.json` with `"source": "auto"`. Entries without 
 (context menu "Set show title/override" writes `"source": "manual"`) and are never overwritten.
 Browsing shows the identified TMDB title with year and ids ([tmdb] {tvdb} <imdb>), or the untouched original folder name. Export Library first
 identifies new folders and skips ones that stay unidentified; there is no regex name cleaning anymore.
+Library folders are named `Title (Year) {tmdb-ID}` (`library_folder_name`) so same-named titles
+never share a folder; exports/downloads rename older `Title (Year)` / `Title` folders and their
+same-name files in place (`migrate_legacy_folder`). `exports.json` records what was exported per account.
 
 ## Library Export Behavior
 - Movies:

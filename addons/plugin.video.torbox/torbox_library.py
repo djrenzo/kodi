@@ -1,4 +1,7 @@
+import json
 import os
+import re
+import time
 import xml.etree.ElementTree as ET
 from urllib.parse import parse_qsl, unquote, urlparse
 
@@ -10,6 +13,7 @@ from torbox_common import (
     ADDON,
     ADDON_ID,
     APP_NAME,
+    PROFILE_PATH,
     SKIP_EXTS,
     VIDEO_EXTS,
     build_url,
@@ -28,7 +32,12 @@ from torbox_text import (
     DIALOG_CLEANUP_DONE,
     DIALOG_CLEANUP_NOTHING,
     DIALOG_CLEANUP_UNREACHABLE,
+    DIALOG_EXPORT_MODE,
+    DIALOG_EXPORT_MODE_ALL,
+    DIALOG_EXPORT_MODE_NEW,
+    DIALOG_EXPORT_NOTHING_NEW,
     DIALOG_IDENTIFY_EXPORT_FAILED,
+    DIALOG_LIBRARY_EXPORT_ALREADY,
     DIALOG_LIBRARY_EXPORT_DONE,
     DIALOG_LIBRARY_EXPORT_SKIPPED,
     DIALOG_LIBRARY_PATH_NOT_CONFIGURED,
@@ -198,24 +207,13 @@ def get_library_folder_for(folder_name):
     if not library_root or not ADDON.getSettingBool('library_source_created'):
         return None
 
-    overrides = load_overrides()
-    override = overrides.get(folder_name, {})
-    media_type = override.get('type', 'tvshow')
-
-    if override.get('title'):
-        clean_title = override['title']
-        year = override.get('year')
-    else:
-        parsed = parse_release_name(folder_name)
-        clean_title, year = parsed['title'], parsed['year']
-
-    if media_type == 'movie' and year:
-        sub_folder = '{} ({})'.format(clean_title, year)
-    else:
-        sub_folder = clean_title
-
-    media_root = get_media_library_root(library_root, media_type)
-    return os.path.join(media_root, sub_folder)
+    info = resolve_media_info(folder_name, load_overrides())
+    media_root = get_media_library_root(library_root, info['media_type'])
+    folder = join_path(media_root, library_folder_name(info))
+    legacy = join_path(media_root, legacy_folder_name(info))
+    if not xbmcvfs.exists(folder) and xbmcvfs.exists(legacy):
+        return legacy  # exported before folders carried an id and not migrated yet
+    return folder
 
 
 def resolve_media_info(raw_name, overrides):
@@ -245,6 +243,50 @@ def resolve_media_info(raw_name, overrides):
 
 def movie_folder_name(title, year):
     return '{} ({})'.format(title, year) if year else title
+
+
+_UNSAFE_CHARS = re.compile(r'[<>"/\\|?*]')
+
+
+def library_folder_name(info):
+    """'Title (Year) {tmdb-123}': the id keeps two titles with the same name apart, and
+    Kodi's scrapers read it. Characters Windows/SMB can't store are replaced."""
+    name = movie_folder_name(info['title'], info.get('year'))
+    for key in ('tmdb', 'imdb', 'tvdb'):
+        if info.get(key + '_id'):
+            name = '{} {{{}-{}}}'.format(name, key, info[key + '_id'])
+            break
+    name = name.replace(':', ' -')
+    return re.sub(r'\s+', ' ', _UNSAFE_CHARS.sub('', name)).strip(' .')
+
+
+def legacy_folder_name(info):
+    """Folder name used before ids were added (movies 'Title (Year)', shows 'Title')."""
+    if info['media_type'] == 'movie':
+        return movie_folder_name(info['title'], info.get('year'))
+    return info['title']
+
+
+def migrate_legacy_folder(media_root, info, rename_prefix=None):
+    """Move an old-style folder to its id-based name, keeping subtitles and artwork in it.
+    rename_prefix: (old, new) file name prefix; files named after the old folder (the movie
+    STRM/video and its '<name>.es.srt', '<name>-poster.jpg' ...) are renamed to match.
+    Returns the folder to use."""
+    folder = join_path(media_root, library_folder_name(info))
+    legacy = join_path(media_root, legacy_folder_name(info))
+    if legacy == folder or xbmcvfs.exists(folder) or not xbmcvfs.exists(legacy):
+        return folder
+    if not xbmcvfs.rename(legacy, folder):
+        log('Could not rename "{}" to "{}"'.format(legacy, folder), xbmc.LOGWARNING)
+        return folder
+    log('Renamed library folder "{}" -> "{}"'.format(legacy, folder))
+    if rename_prefix and rename_prefix[0] != rename_prefix[1]:
+        old, new = rename_prefix
+        _, files = xbmcvfs.listdir(folder if folder.endswith('/') or '://' not in folder else folder + '/')
+        for filename in files:
+            if filename.startswith(old + '.') or filename.startswith(old + '-'):
+                xbmcvfs.rename(join_path(folder, filename), join_path(folder, new + filename[len(old):]))
+    return folder
 
 
 def episode_basename(title, season, episode_no):
@@ -303,6 +345,61 @@ def numbered_episodes(raw_name, episodes, overrides):
     return numbered
 
 
+EXPORTS_FILE = os.path.join(PROFILE_PATH, 'exports.json')
+
+
+def load_export_log():
+    """{account index: {folder name: {identity, title, type, folder, files, time}}}"""
+    if not xbmcvfs.exists(EXPORTS_FILE):
+        return {}
+    try:
+        with xbmcvfs.File(EXPORTS_FILE, 'r') as f:
+            return json.loads(f.read()) or {}
+    except Exception as exc:
+        log('Failed to load export log: {}'.format(exc), xbmc.LOGWARNING)
+        return {}
+
+
+def _save_export_log(data):
+    if not xbmcvfs.exists(PROFILE_PATH):
+        xbmcvfs.mkdirs(PROFILE_PATH)
+    try:
+        with xbmcvfs.File(EXPORTS_FILE, 'w') as f:
+            f.write(json.dumps(data, indent=2))
+    except Exception as exc:
+        log('Failed to save export log: {}'.format(exc), xbmc.LOGWARNING)
+
+
+def _identity(info):
+    """What a folder was exported as; a different identity means it needs exporting again."""
+    return '{}:{}:{}'.format(info['media_type'], info.get('tmdb_id') or info['title'],
+                             library_folder_name(info))
+
+
+def _mark_exported(account_index, raw_name, info, folder, files):
+    data = load_export_log()
+    data.setdefault(str(account_index), {})[raw_name] = {
+        'identity': _identity(info),
+        'title': info['title'],
+        'type': info['media_type'],
+        'folder': folder,
+        'files': files,
+        'time': time.strftime('%Y-%m-%d %H:%M:%S'),
+    }
+    _save_export_log(data)
+
+
+def is_exported(export_log, account_index, raw_name, overrides):
+    """True when the folder was exported under its current identification and its
+    library folder still exists."""
+    entry = export_log.get(str(account_index), {}).get(raw_name)
+    if not entry or not overrides.get(raw_name, {}).get('title'):
+        return False
+    if entry.get('identity') != _identity(resolve_media_info(raw_name, overrides)):
+        return False
+    return bool(entry.get('folder')) and xbmcvfs.exists(entry['folder'])
+
+
 def normalize_collection_path(child_path):
     normalized_path = unquote(child_path or '')
     if normalized_path and not normalized_path.endswith('/'):
@@ -324,8 +421,9 @@ def _export_collection(account, account_index, raw_name, child_path, overrides, 
         return 0
 
     if media_type == 'movie':
-        folder_name = movie_folder_name(clean_title, year)
-        movie_folder = join_path(movies_root, folder_name)
+        folder_name = library_folder_name(info)
+        # Old export: its STRM and subtitles are named after the old folder; rename them too.
+        movie_folder = migrate_legacy_folder(movies_root, info, (legacy_folder_name(info), folder_name))
 
         if not xbmcvfs.exists(movie_folder):
             xbmcvfs.mkdirs(movie_folder)
@@ -348,9 +446,10 @@ def _export_collection(account, account_index, raw_name, child_path, overrides, 
             }
         )
         write_text_file(strm_path, plugin_url)
+        _mark_exported(account_index, raw_name, info, movie_folder, 1)
         return 1
 
-    show_folder = join_path(tvshows_root, clean_title)
+    show_folder = migrate_legacy_folder(tvshows_root, info)
     if not xbmcvfs.exists(show_folder):
         xbmcvfs.mkdirs(show_folder)
 
@@ -371,6 +470,8 @@ def _export_collection(account, account_index, raw_name, child_path, overrides, 
         write_text_file(strm_path, plugin_url)
         created += 1
 
+    if created:
+        _mark_exported(account_index, raw_name, info, show_folder, created)
     return created
 
 
@@ -383,6 +484,12 @@ def export_library(account_index):
     library_root = get_library_path()
     if not library_root:
         return
+
+    mode = xbmcgui.Dialog().select(DIALOG_EXPORT_MODE.format(account['name']),
+                                   [DIALOG_EXPORT_MODE_NEW, DIALOG_EXPORT_MODE_ALL])
+    if mode < 0:
+        return
+    only_new = mode == 0
 
     if not xbmcvfs.exists(library_root):
         xbmcvfs.mkdirs(library_root)
@@ -400,6 +507,17 @@ def export_library(account_index):
 
     root_items = parse_propfind(root_xml, account['url'], '/')
     folders = [item for item in root_items if item.get('is_collection') and item.get('name')]
+
+    already = 0
+    if only_new:
+        export_log = load_export_log()
+        overrides = load_overrides()
+        remaining = [f for f in folders if not is_exported(export_log, account_index, f['name'], overrides)]
+        already = len(folders) - len(remaining)
+        folders = remaining
+        if not folders:
+            xbmcgui.Dialog().ok(APP_NAME, DIALOG_EXPORT_NOTHING_NEW)
+            return
 
     # Identify anything new first, so the library only gets proper TMDB names.
     pending = pending_folders(folders, load_overrides())
@@ -433,6 +551,8 @@ def export_library(account_index):
         )
 
     message = DIALOG_LIBRARY_EXPORT_DONE.format(created)
+    if already:
+        message += DIALOG_LIBRARY_EXPORT_ALREADY.format(already)
     if skipped:
         message += DIALOG_LIBRARY_EXPORT_SKIPPED.format(skipped)
     xbmcgui.Dialog().ok(APP_NAME, message)

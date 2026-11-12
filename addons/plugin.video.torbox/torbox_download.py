@@ -12,7 +12,9 @@ from torbox_library import (
     find_main_video,
     get_media_library_root,
     join_path,
-    movie_folder_name,
+    legacy_folder_name,
+    library_folder_name,
+    migrate_legacy_folder,
     normalize_collection_path,
     numbered_episodes,
     resolve_media_info,
@@ -78,14 +80,17 @@ def _plan_downloads(account, raw_name, overrides, info, remote_path, download_ro
     ext_of = lambda item: os.path.splitext(item['name'])[1].lower()
 
     if info['media_type'] == 'movie':
-        folder_name = movie_folder_name(info['title'], info['year'])
-        folder = join_path(get_media_library_root(download_root, 'movie'), folder_name)
+        folder_name = library_folder_name(info)
         video_item = find_main_video(account, remote_path)
         if video_item is None or ext_of(video_item) == '.strm':
-            return folder, []
-        return folder, [(video_item, join_path(folder, folder_name + ext_of(video_item)))]
+            return join_path(get_media_library_root(download_root, 'movie'), folder_name), []
+        ext = ext_of(video_item)
+        # Earlier downloads used 'Title (Year)': move them (and the file) so nothing re-downloads.
+        folder = migrate_legacy_folder(get_media_library_root(download_root, 'movie'), info,
+                                       (legacy_folder_name(info), folder_name))
+        return folder, [(video_item, join_path(folder, folder_name + ext))]
 
-    folder = join_path(get_media_library_root(download_root, 'tvshow'), info['title'])
+    folder = migrate_legacy_folder(get_media_library_root(download_root, 'tvshow'), info)
     jobs = []
     videos = [item for item in walk_webdav(account, remote_path) if ext_of(item) != '.strm']
     for episode, season, episode_no in numbered_episodes(raw_name, videos, overrides):
