@@ -13,7 +13,6 @@ from torbox_common import (
     SKIP_EXTS,
     VIDEO_EXTS,
     build_url,
-    clean_show_name,
     extract_bare_episode,
     extract_episode_info,
     get_account,
@@ -29,7 +28,9 @@ from torbox_text import (
     DIALOG_CLEANUP_DONE,
     DIALOG_CLEANUP_NOTHING,
     DIALOG_CLEANUP_UNREACHABLE,
+    DIALOG_IDENTIFY_EXPORT_FAILED,
     DIALOG_LIBRARY_EXPORT_DONE,
+    DIALOG_LIBRARY_EXPORT_SKIPPED,
     DIALOG_LIBRARY_PATH_NOT_CONFIGURED,
     DIALOG_LIBRARY_SOURCE_ADDED,
     NOTIFY_ACCOUNT_NOT_FOUND,
@@ -37,7 +38,9 @@ from torbox_text import (
     PROGRESS_CLEANUP_ACCOUNT,
     PROGRESS_CLEANUP_LIBRARY,
     PROGRESS_CLEANUP_TITLE,
+    PROGRESS_IDENTIFY,
 )
+from torbox_identify import identify_items, identify_one, parse_release_name, pending_folders
 from torbox_webdav import parse_propfind, propfind
 
 
@@ -203,7 +206,8 @@ def get_library_folder_for(folder_name):
         clean_title = override['title']
         year = override.get('year')
     else:
-        clean_title, year = clean_show_name(folder_name)
+        parsed = parse_release_name(folder_name)
+        clean_title, year = parsed['title'], parsed['year']
 
     if media_type == 'movie' and year:
         sub_folder = '{} ({})'.format(clean_title, year)
@@ -215,16 +219,20 @@ def get_library_folder_for(folder_name):
 
 
 def resolve_media_info(raw_name, overrides):
-    """Return title/year/ids/type for a WebDAV folder, preferring its manual override."""
+    """Return title/year/ids/type for a WebDAV folder from its (auto or manual) identification.
+    Unidentified folders fall back to a title parsed from the release name, used only for
+    file/folder naming (downloads), never for display."""
     override = overrides.get(raw_name, {})
 
     if override.get('title'):
         clean_title = override['title']
         year = override.get('year')
     else:
-        clean_title, year = clean_show_name(raw_name)
+        parsed = parse_release_name(raw_name)
+        clean_title, year = parsed['title'], parsed['year']
 
     return {
+        'identified': bool(override.get('title')),
         'media_type': override.get('type', 'tvshow'),
         'title': clean_title,
         'year': year,
@@ -386,21 +394,32 @@ def export_library(account_index):
     if not xbmcvfs.exists(tvshows_root):
         xbmcvfs.mkdirs(tvshows_root)
 
-    overrides = load_overrides()
-
     root_xml = propfind(account['url'] + '/', account['username'], account['password'], depth=1)
     if root_xml is None:
         return
 
     root_items = parse_propfind(root_xml, account['url'], '/')
+    folders = [item for item in root_items if item.get('is_collection') and item.get('name')]
+
+    # Identify anything new first, so the library only gets proper TMDB names.
+    pending = pending_folders(folders, load_overrides())
+    if pending:
+        progress = xbmcgui.DialogProgress()
+        progress.create(APP_NAME, PROGRESS_IDENTIFY.format(0, len(pending), ''))
+        try:
+            identify_items(account, pending, progress)
+        finally:
+            progress.close()
+
+    overrides = load_overrides()
     created = 0
+    skipped = 0
 
-    for root_item in root_items:
-        if not root_item.get('is_collection'):
-            continue
-
-        raw_name = root_item.get('name')
-        if not raw_name:
+    for root_item in folders:
+        raw_name = root_item['name']
+        if not overrides.get(raw_name, {}).get('title'):
+            skipped += 1
+            log('Export: skipping unidentified "{}"'.format(raw_name))
             continue
 
         created += _export_collection(
@@ -413,7 +432,10 @@ def export_library(account_index):
             tvshows_root,
         )
 
-    xbmcgui.Dialog().ok(APP_NAME, DIALOG_LIBRARY_EXPORT_DONE.format(created))
+    message = DIALOG_LIBRARY_EXPORT_DONE.format(created)
+    if skipped:
+        message += DIALOG_LIBRARY_EXPORT_SKIPPED.format(skipped)
+    xbmcgui.Dialog().ok(APP_NAME, message)
 
     if not ADDON.getSettingBool('library_source_created'):
         ensure_video_source('TorBox Library', library_root)
@@ -447,12 +469,19 @@ def export_library_item(account_index, folder_name, remote_path):
     if not xbmcvfs.exists(tvshows_root):
         xbmcvfs.mkdirs(tvshows_root)
 
+    overrides = load_overrides()
+    if not overrides.get(folder_name, {}).get('title'):
+        if not identify_one(account, folder_name, normalize_collection_path(remote_path)):
+            xbmcgui.Dialog().ok(APP_NAME, DIALOG_IDENTIFY_EXPORT_FAILED.format(folder_name[:80]))
+            return
+        overrides = load_overrides()
+
     created = _export_collection(
         account,
         account_index,
         folder_name,
         remote_path,
-        load_overrides(),
+        overrides,
         movies_root,
         tvshows_root,
     )

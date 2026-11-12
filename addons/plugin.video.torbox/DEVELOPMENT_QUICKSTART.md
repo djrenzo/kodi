@@ -20,6 +20,7 @@ Main actions handled by `router()` in `addon.py`:
 - `browse`
 - `library_browse`
 - `play`
+- `identify_library`
 - `set_override`
 - `add_subtitles`
 - `view_overrides`
@@ -30,6 +31,7 @@ Main actions handled by `router()` in `addon.py`:
 - `export_item`
 - `download_item`
 - `cleanup_library`
+- `reconnect_log`
 
 ## Data Locations
 - Settings schema: `resources/settings.xml`
@@ -88,3 +90,13 @@ Outside Kodi runtime, unresolved import warnings for `xbmc*` modules are expecte
 
 ## Handoff Pointer
 For full architecture and rationale, read `DEVELOPMENT_KNOWLEDGE.md`.
+
+## Streaming Proxy
+`service.py` starts `torbox_proxy.StreamProxy` on `127.0.0.1:52741` (or a free port; the port is
+published as the `torbox.proxy.port` Home window property). With `stream_proxy` enabled, `play_item`
+and `play_search` hand Kodi a proxy URL instead of the WebDAV/stream URL. The proxy copies the file
+through and, when the upstream connection drops or sends nothing for 10 s, re-requests the original
+URL (TorBox gives a fresh download server) with a Range from the next unsent byte, up to 5 attempts.
+Each reconnect is appended to `reconnects.log` (JSON lines, last 500) in the addon profile, shown via
+Management > View stream reconnect log. The WebDAV login is never put in the proxy URL and is dropped
+on redirects to another host.

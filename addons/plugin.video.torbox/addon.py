@@ -19,7 +19,6 @@ from torbox_common import (
     VIDEO_EXTS,
     VIDEO_MIMETYPES,
     build_url,
-    clean_show_name,
     extract_episode_info,
     get_account,
     get_accounts,
@@ -48,6 +47,9 @@ from torbox_text import (
     DIALOG_OVERRIDES_DELETE_TITLE,
     DIALOG_OVERRIDES_EMPTY,
     DIALOG_OVERRIDES_SELECT_DELETE,
+    DIALOG_RECONNECT_LOG_EMPTY,
+    DIALOG_RECONNECT_LOG_SUMMARY,
+    DIALOG_RECONNECT_LOG_TITLE,
     DIALOG_OVERRIDES_TITLE,
     DIALOG_PICK_TMDB,
     DIALOG_SET_CONTENT_TYPE,
@@ -56,10 +58,10 @@ from torbox_text import (
     DIALOG_SET_TVDB,
     DIALOG_SET_YEAR,
     LABEL_GRAY_ITEM,
-    LABEL_MEDIA_FOLDER,
-    LABEL_MEDIA_UNKNOWN,
+    LABEL_MANUAL_ITEM,
     MENU_ACCOUNT_BROWSE,
     MENU_ACCOUNT_EXPORT,
+    MENU_ACCOUNT_IDENTIFY,
     MENU_ADD_ACCOUNT,
     MENU_CLEANUP_LIBRARY,
     MENU_CONFIGURE_PROVIDERS,
@@ -69,6 +71,7 @@ from torbox_text import (
     MENU_MANAGE_OVERRIDES,
     MENU_EXPORT_OVERRIDES,
     MENU_SEARCH,
+    MENU_RECONNECT_LOG,
     MENU_SETTINGS,
     MENU_TOP_MOVIES,
     MENU_TOP_SERIES,
@@ -78,6 +81,8 @@ from torbox_text import (
     NOTIFY_SEARCHING_TMDB,
 )
 from torbox_http import fetch_json
+from torbox_proxy import proxied_url, read_reconnects
+from torbox_identify import identify_library, is_manual, parse_release_name
 from torbox_webdav import build_authed_url, parse_propfind, propfind
 from torbox_datafetcher import DataFetcher
 
@@ -169,6 +174,14 @@ def list_accounts():
             isFolder=True,
         )
 
+        li = xbmcgui.ListItem(label=MENU_ACCOUNT_IDENTIFY.format(acc['name']))
+        xbmcplugin.addDirectoryItem(
+            HANDLE,
+            build_url({'action': 'identify_library', 'account': acc['index']}),
+            li,
+            isFolder=False,
+        )
+
         li = xbmcgui.ListItem(label=MENU_ACCOUNT_EXPORT.format(acc['name']))
         xbmcplugin.addDirectoryItem(
             HANDLE,
@@ -206,6 +219,9 @@ def management_menu():
 
     li = xbmcgui.ListItem(label=MENU_CLEANUP_LIBRARY)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'cleanup_library'}), li, isFolder=False)
+
+    li = xbmcgui.ListItem(label=MENU_RECONNECT_LOG)
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'reconnect_log'}), li, isFolder=False)
 
     li = xbmcgui.ListItem(label=MENU_SETTINGS)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'settings'}), li, isFolder=False)
@@ -253,9 +269,11 @@ def list_directory(account_index, remote_path, is_library_root=False):
             if not child_path.endswith('/'):
                 child_path += '/'
 
+            # Identified (automatically or by hand): the proper TMDB name. Otherwise the
+            # folder's original name, untouched.
             override = overrides.get(name, {})
-            thumb_url = ''
-            plot = ''
+            year = None
+            tvdb_id = tmdb_id = imdb_id = thumb_url = plot = ''
             if override.get('title'):
                 clean_title = override['title']
                 year = override.get('year')
@@ -265,34 +283,30 @@ def list_directory(account_index, remote_path, is_library_root=False):
                 thumb_url = override.get('thumb', '')
                 plot = override.get('plot', '')
                 media_type = override.get('type', 'tvshow')
-                display_label = LABEL_MEDIA_FOLDER.format(media_type, clean_title)
+                display_label = '{} ({})'.format(clean_title, year) if year else clean_title
+                if tmdb_id:
+                    display_label = '{} [{}]'.format(display_label, tmdb_id)
+                if tvdb_id:
+                    display_label = display_label + ' {' + tvdb_id + '}'
+                if imdb_id:
+                    display_label = '{} <{}>'.format(display_label, imdb_id)
+                if is_manual(override):
+                    display_label = LABEL_MANUAL_ITEM.format(display_label)
             elif show_unclassified:
-                clean_title, year = clean_show_name(name)
-                tvdb_id = ''
-                tmdb_id = ''
-                imdb_id = ''
-                media_type = 'tvshow'
-                display_label = LABEL_MEDIA_UNKNOWN.format("unknown", clean_title)
+                clean_title = name
+                media_type = 'video'
+                display_label = name
             else:
                 continue
 
-            if year:
-                display_label = '{} ({})'.format(display_label, year)
-            if tmdb_id:
-                display_label = '{} [{}]'.format(display_label, tmdb_id)
-            if tvdb_id:
-                display_label = display_label + " {" + tvdb_id + "}"
-            if imdb_id:
-                display_label = '{} <{}>'.format(display_label, imdb_id)
-
             li = xbmcgui.ListItem(label=display_label)
             info = {
-                'title': display_label,
+                'title': clean_title,
                 'tvshowtitle': clean_title,
                 'originaltitle': clean_title,
                 'sorttitle': clean_title,
                 'mediatype': media_type,
-                'plot': plot or clean_title,
+                'plot': plot or name,
             }
             if year:
                 info['year'] = year
@@ -416,8 +430,11 @@ def play_item(account_index, stream_url, strm_path=None):
         xbmcgui.Dialog().notification(APP_NAME, NOTIFY_ACCOUNT_NOT_FOUND, xbmcgui.NOTIFICATION_ERROR)
         return
 
-    authed_url = build_authed_url(stream_url, account['username'], account['password'])
-    li = xbmcgui.ListItem(path=authed_url)
+    # Through the local proxy (resumes when TorBox drops the connection) when it's
+    # running; otherwise straight to WebDAV with the login in the URL.
+    play_url = proxied_url(stream_url, account_index) or build_authed_url(
+        stream_url, account['username'], account['password'])
+    li = xbmcgui.ListItem(path=play_url)
 
     ext = os.path.splitext(stream_url)[1].lower()
     mime = VIDEO_MIMETYPES.get(ext)
@@ -442,7 +459,7 @@ def play_search(stream_url, imdb_id=None):
             subtitle_lang = subtitle_lang_options[lang_idx]
             subs = search_subs_imdb_id(imdb_id, subtitle_lang)
 
-    li = xbmcgui.ListItem(path=stream_url)
+    li = xbmcgui.ListItem(path=proxied_url(stream_url) or stream_url)
     li.setSubtitles(subs)
     log('Found subtitles: {}'.format(subs))
     xbmcplugin.setResolvedUrl(HANDLE, True, li)
@@ -1014,7 +1031,8 @@ def set_override(folder_name, account_index):
 
     overrides = load_overrides()
     existing = overrides.get(folder_name, {})
-    clean_guess, year_guess = clean_show_name(folder_name)
+    parsed = parse_release_name(folder_name)
+    clean_guess, year_guess = parsed['title'], parsed['year']
 
     dialog = xbmcgui.Dialog()
 
@@ -1106,7 +1124,7 @@ def set_override(folder_name, account_index):
         # Try to fetch IMDB ID from TMDB
         imdb_id = get_external_id_from_tmdb(tmdb_id, media_type='movie', external_source="imdb_id") or ''
 
-    entry = {'title': title, 'type': media_type}
+    entry = {'title': title, 'type': media_type, 'source': 'manual'}
     if year_value is not None:
         entry['year'] = year_value
 
@@ -1170,6 +1188,35 @@ def view_overrides():
         del overrides[folder_name]
         save_overrides(overrides)
         xbmcgui.Dialog().notification(APP_NAME, NOTIFY_OVERRIDE_REMOVED, xbmcgui.NOTIFICATION_INFO, 2000)
+
+
+def _format_bytes(count):
+    for unit in ('B', 'KB', 'MB', 'GB'):
+        if count < 1024 or unit == 'GB':
+            return '{:.1f} {}'.format(count, unit) if unit != 'B' else '{} B'.format(count)
+        count /= 1024.0
+
+
+def view_reconnect_log():
+    entries = read_reconnects()
+    if not entries:
+        xbmcgui.Dialog().ok(DIALOG_RECONNECT_LOG_TITLE, DIALOG_RECONNECT_LOG_EMPTY)
+        return
+
+    resumed = sum(1 for e in entries if e.get('result') == 'resumed')
+    lines = [DIALOG_RECONNECT_LOG_SUMMARY.format(len(entries), resumed, len(entries) - resumed), '']
+    for e in entries:
+        ok = e.get('result') == 'resumed'
+        status = '[COLOR springgreen]RESUMED[/COLOR]' if ok else '[COLOR red]FAILED[/COLOR]'
+        lines.append('{}  {}  [B]{}[/B]'.format(e.get('time', '?'), status, e.get('file', '?')))
+        detail = '    at {}, {}; {} attempt(s), {:.1f} s'.format(
+            _format_bytes(e.get('offset', 0)), e.get('error', '?'),
+            e.get('attempts', '?'), e.get('downtime_ms', 0) / 1000.0)
+        if not ok and e.get('last_error'):
+            detail += '; last error: {}'.format(e['last_error'])
+        lines.append(detail)
+
+    xbmcgui.Dialog().textviewer(DIALOG_RECONNECT_LOG_TITLE, '\n'.join(lines))
 
 
 def _get_account_param(params):
@@ -1246,10 +1293,14 @@ def router():
         ADDON.openSettings()
     elif action == 'refresh':
         xbmc.executebuiltin('UpdateLibrary(video)')
+    elif action == 'identify_library':
+        identify_library(_get_account_param(params))
     elif action == 'export_library':
         export_library(_get_account_param(params))
     elif action == 'cleanup_library':
         cleanup_library()
+    elif action == 'reconnect_log':
+        view_reconnect_log()
     elif action == 'export_item':
         export_library_item(
             _get_account_param(params),

@@ -2,6 +2,7 @@
 
 MENU_ACCOUNT_BROWSE = '[B]{} - Browse[/B]'
 MENU_ACCOUNT_EXPORT = '{} - Export Library'
+MENU_ACCOUNT_IDENTIFY = '{} - Identify Library'
 MENU_ADD_ACCOUNT = '[COLOR springgreen]Add account {} via Phone[/COLOR]'
 MENU_TOP_MOVIES = '[COLOR springgreen]Top Movies[/COLOR]'
 MENU_TOP_SERIES = '[COLOR springgreen]Top Series[/COLOR]'
@@ -13,6 +14,7 @@ MENU_MANAGE_OVERRIDES = '[COLOR yellow]Manage show overrides[/COLOR]'
 MENU_EXPORT_OVERRIDES = '[COLOR yellow]Export overrides[/COLOR]'
 MENU_IMPORT_OVERRIDES = '[COLOR yellow]Import overrides[/COLOR]'
 MENU_CLEANUP_LIBRARY = '[COLOR yellow]Cleanup library (remove titles no longer on TorBox)[/COLOR]'
+MENU_RECONNECT_LOG = '[COLOR yellow]View stream reconnect log[/COLOR]'
 MENU_SETTINGS = '[COLOR gray]Settings[/COLOR]'
 
 CONTEXT_SET_OVERRIDE = 'Set show title/override'
@@ -21,8 +23,7 @@ CONTEXT_REFRESH_LIBRARY = 'Refresh library'
 CONTEXT_EXPORT_SINGLE_ITEM = 'Export this item to library'
 CONTEXT_DOWNLOAD_ITEM = 'Download'
 
-LABEL_MEDIA_UNKNOWN = '[COLOR red]{} |[/COLOR] {}'
-LABEL_MEDIA_FOLDER = '[COLOR springgreen]{} |[/COLOR] {}'
+LABEL_MANUAL_ITEM = '{} [COLOR gray](manual)[/COLOR]'
 LABEL_GRAY_ITEM = '[COLOR gray]{}[/COLOR]'
 
 NOTIFY_ACCOUNT_NOT_FOUND = 'Account not found'
@@ -597,3 +598,17 @@ SETUP_RESULT_ERROR_HTML = """<!doctype html>
 </body>
 </html>
 """
+
+DIALOG_RECONNECT_LOG_TITLE = 'Stream reconnect log'
+DIALOG_RECONNECT_LOG_EMPTY = 'No stream reconnects logged yet.'
+DIALOG_RECONNECT_LOG_SUMMARY = '{} reconnect(s): [COLOR springgreen]{} resumed[/COLOR], [COLOR red]{} failed[/COLOR] (newest first)'
+
+DIALOG_IDENTIFY_MODE = 'Identify movies and series in {}'
+DIALOG_IDENTIFY_MODE_NEW = 'Only items not identified yet'
+DIALOG_IDENTIFY_MODE_ALL = 'Redo all automatic matches (manual overrides are kept)'
+DIALOG_IDENTIFY_NOTHING = 'Everything is already identified.'
+DIALOG_IDENTIFY_DONE = 'Identified {} item(s): {} movie(s), {} series.\n{} item(s) could not be identified.'
+DIALOG_IDENTIFY_UNMATCHED = '\n\nNot identified (use "Set show title/override" on these):\n{}'
+DIALOG_IDENTIFY_EXPORT_FAILED = 'Could not identify:\n"{}"\n\nUse "Set show title/override" first.'
+PROGRESS_IDENTIFY = 'Identifying {}/{}\n{}'
+DIALOG_LIBRARY_EXPORT_SKIPPED = '\n\n{} unidentified item(s) were skipped. Use "Set show title/override" on them.'

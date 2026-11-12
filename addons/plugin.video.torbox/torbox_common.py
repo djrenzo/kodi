@@ -66,11 +66,6 @@ _QUALITY_TAGS = re.compile(
     r')\b',
     re.IGNORECASE,
 )
-_YEAR_RANGE = re.compile(r'\b\d{4}-\d{4}\b')
-_YEAR = re.compile(r'\b(19|20)\d{2}\b')
-_BRACKETS = re.compile(r'\[.*?\]|\((?!\d{4}\))[^)]*\)')
-_DOTS_DASHES = re.compile(r'[._]+')
-_MULTI_SPACE = re.compile(r'\s{2,}')
 _MISSING_PROVIDER_SETTING_NOTIFIED = set()
 
 
@@ -382,36 +377,6 @@ def import_overrides():
         xbmcgui.NOTIFICATION_INFO,
     )
     return True
-
-
-def clean_show_name(raw_name):
-    value = raw_name
-
-    if value.count('.') >= 2:
-        value = _DOTS_DASHES.sub(' ', value)
-
-    year = None
-    year_range = _YEAR_RANGE.search(value)
-    if year_range:
-        year = int(year_range.group().split('-')[0])
-        value = value.replace(year_range.group(), '')
-    else:
-        year_match = _YEAR.search(value)
-        if year_match:
-            year = int(year_match.group())
-
-    value = _BRACKETS.sub(' ', value)
-    value = re.sub(r'\bS\d{1,2}(?:-S\d{1,2})?\b', ' ', value, flags=re.IGNORECASE)
-    value = re.sub(r'\bSeason\s+\d{1,2}(?:\s*-\s*\d{1,2})?\b', ' ', value, flags=re.IGNORECASE)
-    value = _QUALITY_TAGS.sub(' ', value)
-    value = _YEAR.sub(' ', value)
-    value = re.sub(r'\s+-\s*\w+$', '', value)
-    value = re.sub(r'-\w+$', '', value)
-    value = re.sub(r'[+]', ' ', value)
-    value = re.sub(r"[^\w\s'\-\.]", ' ', value)
-    value = _MULTI_SPACE.sub(' ', value).strip(' -.')
-
-    return value, year
 
 
 def extract_episode_info(filename):

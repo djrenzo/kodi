@@ -41,6 +41,7 @@ This document captures the current architecture, behavior, conventions, and impl
 - `browse`
 - `library_browse`
 - `play`
+- `identify_library`
 - `set_override`
 - `add_subtitles`
 - `view_overrides`
@@ -71,6 +72,15 @@ Key groups:
 
 ### Subtitle Metadata
 Subtitle selections are persisted under each override entry in `subs`, allowing repeat use and auditability.
+
+### Identification (Infuse/VidHub style)
+`torbox_identify.py`: "<account> - Identify Library" parses each root folder name (`parse_release_name`),
+decides movie vs series (name markers like S01/Season/Temporada, else the folder contents) and searches
+the TMDB API; a result is kept when the normalized title similarity (plus a year bonus) reaches 0.8.
+Matches are stored in `overrides.json` with `"source": "auto"`. Entries without that marker are manual
+(context menu "Set show title/override" writes `"source": "manual"`) and are never overwritten.
+Browsing shows the identified TMDB title with year and ids ([tmdb] {tvdb} <imdb>), or the untouched original folder name. Export Library first
+identifies new folders and skips ones that stay unidentified; there is no regex name cleaning anymore.
 
 ## Library Export Behavior
 - Movies:
