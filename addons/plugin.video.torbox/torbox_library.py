@@ -247,6 +247,8 @@ def resolve_media_info(raw_name, overrides):
         'tmdb_id': override.get('tmdb_id'),
         'imdb_id': override.get('imdb_id'),
         'subs': override.get('subs', []),
+        'season': override.get('season'),
+        'force_season': bool(override.get('force_season')) and override.get('season') is not None,
     }
 
 
@@ -332,12 +334,17 @@ def _ask_season(raw_name, missing_count, overrides):
 
 def numbered_episodes(raw_name, episodes, overrides):
     """Return [(item, season, episode_no)] for the files that can be numbered.
-    Files with only an episode number (e.g. 'E02') get a season asked from the user."""
+    Files with only an episode number (e.g. 'E02') get a season asked from the user.
+    A forced season override replaces the season of every file (S04E01 -> S03E01)."""
+    override = overrides.get(raw_name, {})
+    forced = int(override['season']) if override.get('force_season') and override.get('season') is not None else None
     numbered = []
     bare = []
     for item in episodes:
         season, episode_no = extract_episode_info(item['name'])
         if season is not None:
+            if forced is not None:
+                season = forced
             numbered.append((item, season, episode_no))
             continue
         episode_no = extract_bare_episode(item['name'])
@@ -381,8 +388,11 @@ def _save_export_log(data):
 
 def _identity(info):
     """What a folder was exported as; a different identity means it needs exporting again."""
-    return '{}:{}:{}'.format(info['media_type'], info.get('tmdb_id') or info['title'],
-                             library_folder_name(info))
+    identity = '{}:{}:{}'.format(info['media_type'], info.get('tmdb_id') or info['title'],
+                                 library_folder_name(info))
+    if info['media_type'] == 'tvshow' and info.get('season') is not None:
+        identity += ':S{}{}'.format(info['season'], '!' if info.get('force_season') else '')
+    return identity
 
 
 def _mark_exported(account_index, raw_name, info, folder, files):
@@ -470,9 +480,11 @@ def _export_collection(account, account_index, raw_name, child_path, overrides, 
     write_tvshow_nfo(show_folder, clean_title, tvdb_id, tmdb_id, imdb_id)
 
     created = 0
+    written = {}  # remote path -> STRM name
     for episode, season, episode_no in numbered_episodes(raw_name, walk_webdav(account, normalized_path), overrides):
         strm_name = '{}.strm'.format(episode_basename(clean_title, season, episode_no))
         strm_path = join_path(show_folder, strm_name)
+        written[_normalize_remote_path(episode.get('full_url', ''))] = strm_name
         plugin_url = build_url(
             {
                 'action': 'play',
@@ -485,8 +497,23 @@ def _export_collection(account, account_index, raw_name, child_path, overrides, 
         created += 1
 
     if created:
-        _mark_exported(account_index, raw_name, info, show_folder, created)
+        _remove_renumbered_strms(show_folder, account_index, written)
+        # The season may have been asked during this export; log it with the result.
+        _mark_exported(account_index, raw_name, resolve_media_info(raw_name, overrides), show_folder, created)
     return created
+
+
+def _remove_renumbered_strms(show_folder, account_index, written):
+    """Delete STRMs left from an earlier export of the same episodes under another
+    season/episode number (e.g. after the season override changed)."""
+    _, files = _list_dir(show_folder)
+    for filename in files:
+        if not filename.lower().endswith('.strm') or filename in written.values():
+            continue
+        target = _read_strm_target(join_path(show_folder, filename))
+        if target and target[0] == int(account_index) and target[1] in written:
+            log('Removing renumbered episode "{}"'.format(filename))
+            _remove_stale_strm(show_folder, filename)
 
 
 def export_library(account_index):

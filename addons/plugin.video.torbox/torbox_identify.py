@@ -264,7 +264,7 @@ def _merge_and_save(matches):
         existing = latest.get(raw_name, {})
         if is_manual(existing):
             continue
-        for keep in ('subs', 'season'):
+        for keep in ('subs', 'season', 'force_season'):
             if existing.get(keep) is not None:
                 entry[keep] = existing[keep]
         latest[raw_name] = entry

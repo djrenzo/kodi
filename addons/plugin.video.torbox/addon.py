@@ -4,6 +4,7 @@ Refactored entrypoint that focuses on UI listing and routing.
 """
 
 import os
+import re
 from urllib.parse import unquote
 
 import xbmc
@@ -21,6 +22,7 @@ from torbox_common import (
     build_url,
     extract_episode_info,
     get_account,
+    guess_season,
     get_accounts,
     get_params,
     get_top_catalog,
@@ -54,6 +56,10 @@ from torbox_text import (
     DIALOG_PICK_TMDB,
     DIALOG_SET_CONTENT_TYPE,
     DIALOG_SET_TITLE,
+    DIALOG_SET_SEASON,
+    DIALOG_FORCE_SEASON,
+    DIALOG_FORCE_SEASON_ALL,
+    DIALOG_FORCE_SEASON_BARE,
     DIALOG_SET_TMDB,
     DIALOG_SET_TVDB,
     DIALOG_SET_YEAR,
@@ -286,6 +292,10 @@ def list_directory(account_index, remote_path, is_library_root=False):
                 plot = override.get('plot', '')
                 media_type = override.get('type', 'tvshow')
                 display_label = '{} ({})'.format(clean_title, year) if year else clean_title
+                if media_type == 'tvshow':
+                    seasons = season_label(name, override)
+                    if seasons:
+                        display_label = '{} {}'.format(display_label, seasons)
                 if tmdb_id:
                     display_label = '{} [{}]'.format(display_label, tmdb_id)
                 if tvdb_id:
@@ -1030,6 +1040,23 @@ def choose_tmdb_tvshow(title, year=None, existing_tmdb_id=''):
     }
 
 
+_SEASON_RE = re.compile(r'(?<![A-Za-z0-9])(?:S|Season[ ._-]?)(\d{1,2})(?=E\d|[^A-Za-z0-9]|$)', re.IGNORECASE)
+
+
+def season_label(folder_name, override):
+    """'S03' from the season override ('S03 forced' when it replaces the file seasons),
+    otherwise the season(s) named in the folder: 'S02', or 'S01-S04' for a pack."""
+    if override.get('season') is not None:
+        label = 'S{:02d}'.format(int(override['season']))
+        return label + ' forced' if override.get('force_season') else label
+    seasons = sorted({int(n) for n in _SEASON_RE.findall(folder_name)})
+    if not seasons:
+        return ''
+    if len(seasons) == 1:
+        return 'S{:02d}'.format(seasons[0])
+    return 'S{:02d}-S{:02d}'.format(seasons[0], seasons[-1])
+
+
 def set_override(folder_name, account_index):
     del account_index
 
@@ -1149,9 +1176,31 @@ def set_override(folder_name, account_index):
             entry['plot'] = existing['plot']
     if existing.get('subs'):
         entry['subs'] = existing['subs']
-    if existing.get('season') is not None:
-        entry['season'] = existing['season']
+    if media_type == 'tvshow':
+        season = existing.get('season')
+        default = season if season is not None else guess_season(folder_name)
+        season_str = dialog.input(
+            DIALOG_SET_SEASON,
+            defaultt='' if default is None else str(default),
+            type=xbmcgui.INPUT_NUMERIC,
+        )
+        try:
+            season = int(season_str)
+        except (TypeError, ValueError):
+            season = None  # blank: ask again on the next export
+        if season is not None:
+            entry['season'] = season
+            # Force the season onto files that already carry one, e.g. when the release
+            # follows Netflix numbering (Lupin S04) but TMDB counts it as season 3.
+            force = dialog.select(
+                DIALOG_FORCE_SEASON.format(season),
+                [DIALOG_FORCE_SEASON_BARE, DIALOG_FORCE_SEASON_ALL.format(season, season)],
+                preselect=1 if existing.get('force_season') else 0,
+            )
+            if force == 1 or (force < 0 and existing.get('force_season')):
+                entry['force_season'] = True
 
+    overrides = load_overrides()  # pick up changes saved while the dialogs were open
     overrides[folder_name] = entry
     save_overrides(overrides)
 
