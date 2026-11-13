@@ -1040,16 +1040,35 @@ def choose_tmdb_tvshow(title, year=None, existing_tmdb_id=''):
     }
 
 
-_SEASON_RE = re.compile(r'(?<![A-Za-z0-9])(?:S|Season[ ._-]?)(\d{1,2})(?=E\d|[^A-Za-z0-9]|$)', re.IGNORECASE)
+_SEASON_RE = re.compile(
+    r'(?<![A-Za-z0-9])(?:S|Seasons?[ ._-]?)(\d{1,2})'
+    r'(?:[ ._]?(?:-|to)[ ._]?(?:S|Seasons?[ ._-]?)?(\d{1,2}))?'  # range: S01-05, S01-S05, Season 1-5
+    r'(?=E\d|[^A-Za-z0-9]|$)',
+    re.IGNORECASE,
+)
+
+
+def _folder_seasons(folder_name):
+    seasons = set()
+    for first, last in _SEASON_RE.findall(folder_name):
+        first = int(first)
+        last = int(last) if last else first
+        seasons.update(range(min(first, last), max(first, last) + 1))
+    return sorted(seasons)
 
 
 def season_label(folder_name, override):
-    """'S03' from the season override ('S03 forced' when it replaces the file seasons),
-    otherwise the season(s) named in the folder: 'S02', or 'S01-S04' for a pack."""
-    if override.get('season') is not None:
-        label = 'S{:02d}'.format(int(override['season']))
-        return label + ' forced' if override.get('force_season') else label
-    seasons = sorted({int(n) for n in _SEASON_RE.findall(folder_name)})
+    """Season(s) for the list label: 'S03 forced' (replaces the seasons in the file names),
+    'S01 manual' (set by hand for files without a season number), otherwise what the
+    folder name says: 'S02', or 'S01-S05' for a pack."""
+    seasons = _folder_seasons(folder_name)
+    season = override.get('season')
+    if season is not None:
+        label = 'S{:02d}'.format(int(season))
+        if override.get('force_season'):
+            return label + ' forced'
+        if len(seasons) <= 1:
+            return label + ' manual'
     if not seasons:
         return ''
     if len(seasons) == 1:
