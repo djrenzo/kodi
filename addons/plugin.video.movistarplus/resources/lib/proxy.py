@@ -35,6 +35,7 @@ except ImportError:  # Python 2
 import os
 import re
 import json
+import struct
 import requests
 import threading
 import socket
@@ -67,6 +68,65 @@ def try_load_json(text):
   except:
     return None
 
+def live_sub_offset():
+  """Seconds to show live subtitles earlier (0 = disabled)."""
+  try:
+    return max(0.0, float(addon.getSetting('live_sub_offset') or 0))
+  except ValueError:
+    return 0.0
+
+def route_live_subs_through_proxy(content, baseurl, my_address, offset):
+  """Live captions are typed in real time, so the broadcaster's cue times run
+  a few seconds behind the speech. inputstream.adaptive ignores the manifest's
+  presentationTimeOffset, so instead send the MP4 subtitle segments through
+  this proxy, which moves their timestamps earlier (see shift_tfdt)."""
+  def fix_template(m):
+    tag = m.group(0)
+    ts = re.search(r'timescale="(\d+)"', tag)
+    ticks = int(round(offset * int(ts.group(1) if ts else 1)))
+    def fix_media(mm):
+      media = mm.group(1)
+      if not media.startswith('http'):
+        media = baseurl + '/' + media
+      return 'media="{}/subseg/{}/?url={}"'.format(my_address, ticks, media)
+    return re.sub(r'media="([^"]*)"', fix_media, tag, count=1)
+
+  def fix_adaptation_set(m):
+    block = m.group(0)
+    head = block[:block.find('>')]
+    if 'contentType="text"' not in head and 'mimeType="application/mp4"' not in head:
+      return block
+    if not re.search(r'codecs="(wvtt|stpp[^"]*)"', block):
+      return block
+    return re.sub(r'<SegmentTemplate\b[^>]*>', fix_template, block)
+
+  return re.sub(r'<AdaptationSet\b.*?</AdaptationSet>', fix_adaptation_set, content, flags=re.S)
+
+def shift_tfdt(data, ticks):
+  """Subtract ticks from the baseMediaDecodeTime (tfdt) of every fragment.
+  The value is rewritten in place, so box sizes and trun offsets stay valid."""
+  data = bytearray(data)
+  def walk(start, end):
+    pos = start
+    while pos + 8 <= end:
+      size, box = struct.unpack('>I4s', bytes(data[pos:pos+8]))
+      if size == 0:
+        size = end - pos
+      if size < 8:
+        return
+      if box in (b'moof', b'traf'):
+        walk(pos + 8, pos + size)
+      elif box == b'tfdt':
+        if data[pos+8] == 1:
+          t = struct.unpack('>Q', bytes(data[pos+12:pos+20]))[0]
+          struct.pack_into('>Q', data, pos+12, max(0, t - ticks))
+        else:
+          t = struct.unpack('>I', bytes(data[pos+12:pos+16]))[0]
+          struct.pack_into('>I', data, pos+12, max(0, t - ticks))
+      pos += size
+  walk(0, len(data))
+  return bytes(data)
+
 mvs_o = None
 def mvs():
   global mvs_o
@@ -85,7 +145,23 @@ class RequestHandler(BaseHTTPRequestHandler):
         print('HTTP GET Request received to {}'.format(path))
         try:
         #if True:
-            if 'manifest' in path:
+            if path.startswith('/subseg/'):
+              # /subseg/<ticks>/?url=<segment url>
+              ticks = int(path.split('/')[2])
+              url = path[path.find('?url=')+5:]
+              headers = {}
+              if 'x-tcdn-token' in self.headers:
+                headers['x-tcdn-token'] = self.headers['x-tcdn-token']
+              response = session.get(url, allow_redirects=True, headers=headers)
+              content = response.content
+              if response.status_code == 200 and ticks > 0:
+                content = shift_tfdt(content, ticks)
+              self.send_response(response.status_code)
+              self.send_header('Content-type', 'video/mp4')
+              self.send_header('Content-Length', str(len(content)))
+              self.end_headers()
+              self.wfile.write(content)
+            elif 'manifest' in path:
               pos = path.find('=')
               url = path[pos+1:]
               LOG('url: {}'.format(url))
@@ -110,6 +186,10 @@ class RequestHandler(BaseHTTPRequestHandler):
               pos = content.find('<Period id')
               if pos > -1:
                 content = content[:pos] + '<BaseURL>' + baseurl + '/</BaseURL>' + content[pos:]
+
+              sub_offset = live_sub_offset()
+              if sub_offset > 0 and 'type="dynamic"' in content[:2000]:
+                content = route_live_subs_through_proxy(content, baseurl, 'http://' + self.headers.get('Host'), sub_offset)
 
               if addon.getSettingBool('fix_languages'):
                 replacements = {'qaa': 'eng', 'srd': 'es-[CC]', 'ads': 'es-[ADS]'}
