@@ -32,6 +32,8 @@ Main actions handled by `router()` in `addon.py`:
 - `download_item`
 - `cleanup_library`
 - `reconnect_log`
+- `push_supabase`
+- `configure_supabase`
 
 ## Data Locations
 - Settings schema: `resources/settings.xml`
@@ -100,3 +102,8 @@ URL (TorBox gives a fresh download server) with a Range from the next unsent byt
 Each reconnect is appended to `reconnects.log` (JSON lines, last 500) in the addon profile, shown via
 Management > View stream reconnect log. The WebDAV login is never put in the proxy URL and is dropped
 on redirects to another host.
+
+## Supabase Push
+Management > Push overrides & library to Supabase (`torbox_sync.py`, client in `torbox_supabase.py`)
+uploads overrides, TMDB metadata, subtitles and every playable file (with its authed stream URL) to the
+Supabase catalog. Setup and schema: `/supabase/README.md`, `/supabase/migrations/`.

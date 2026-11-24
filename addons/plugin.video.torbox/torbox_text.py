@@ -15,6 +15,8 @@ MENU_EXPORT_OVERRIDES = '[COLOR yellow]Export overrides[/COLOR]'
 MENU_IMPORT_OVERRIDES = '[COLOR yellow]Import overrides[/COLOR]'
 MENU_CLEANUP_LIBRARY = '[COLOR yellow]Cleanup library (remove titles no longer on TorBox)[/COLOR]'
 MENU_RECONNECT_LOG = '[COLOR yellow]View stream reconnect log[/COLOR]'
+MENU_PUSH_SUPABASE = '[COLOR yellow]Push overrides & library to Supabase[/COLOR]'
+MENU_CONFIGURE_SUPABASE = '[COLOR yellow]Configure Supabase via Phone[/COLOR]'
 MENU_SETTINGS = '[COLOR gray]Settings[/COLOR]'
 
 CONTEXT_SET_OVERRIDE = 'Set show title/override'
@@ -108,6 +110,7 @@ NOTIFY_DOWNLOAD_CANCELLED = 'Download cancelled'
 
 DIALOG_SETUP_SCAN_LABEL = 'Scan with your phone to add your {} account'
 DIALOG_SETUP_SCAN_PROVIDERS_LABEL = 'Scan with your phone to configure {} providers'
+DIALOG_SETUP_SCAN_SUPABASE_LABEL = 'Scan with your phone to configure the {} Supabase connection'
 
 SETUP_PAGE_HTML = """<!doctype html>
 <html lang="en">
@@ -623,3 +626,71 @@ DIALOG_EXPORT_MODE_NEW = 'Only items not exported yet'
 DIALOG_EXPORT_MODE_ALL = 'Re-export everything'
 DIALOG_EXPORT_NOTHING_NEW = 'Nothing new to export.'
 DIALOG_LIBRARY_EXPORT_ALREADY = '\n\n{} item(s) were already exported and left as they are.'
+
+DIALOG_SUPABASE_NOT_CONFIGURED = (
+    'Supabase is not configured.\n'
+    'Use Management > Configure Supabase via Phone, or the Supabase section of the settings.'
+)
+DIALOG_SUPABASE_EMPTY_OVERRIDES = 'There are no overrides to push. Identify a library first.'
+DIALOG_SUPABASE_MODE = 'Push to Supabase'
+DIALOG_SUPABASE_MODE_CHANGED = 'Push (TMDB details only for new or changed titles)'
+DIALOG_SUPABASE_MODE_REFRESH = 'Push and refresh the TMDB details of every title'
+DIALOG_SUPABASE_NOT_ADMIN = (
+    'Logged in as {}, but this user is not an admin of the catalog.\n'
+    'Add it to the members table with role \'admin\' (see supabase/README.md).'
+)
+DIALOG_SUPABASE_DELETE_OVERRIDES = (
+    '{} override(s) in Supabase no longer exist here. Delete them from Supabase?\n\n{}'
+)
+DIALOG_SUPABASE_FAILED = 'Push to Supabase failed:\n\n{}'
+DIALOG_SUPABASE_DONE = (
+    'Pushed to Supabase\n\n'
+    '{titles} title(s) ({tmdb_fetched} with fresh TMDB details), {seasons} season(s), {episodes} episode(s)\n'
+    '{overrides} override(s), {subtitles} subtitle(s), {files} file(s)\n'
+    'Removed: {overrides_deleted} override(s), {files_deleted} file(s), {titles_pruned} title(s)\n'
+    '{unidentified_folders} folder(s) are not identified (pushed without a title).'
+)
+DIALOG_SUPABASE_UNREACHABLE = '\n\nNot completely listed (their missing files were kept): {}'
+NOTIFY_SUPABASE_CANCELLED = 'Push to Supabase cancelled'
+NOTIFY_SUPABASE_SAVED = 'Supabase connection saved'
+PROGRESS_SUPABASE_LOGIN = 'Logging in to Supabase...'
+PROGRESS_SUPABASE_LIST = 'Listing {}: folder {}/{}'
+PROGRESS_SUPABASE_TMDB = 'Fetching TMDB details: {}/{}'
+PROGRESS_SUPABASE_UPLOAD = 'Uploading {}...'
+
+SUPABASE_SETUP_PAGE_HTML = PROVIDERS_SETUP_PAGE_HTML.split('<body>')[0].replace(
+    'Providers Setup', 'Supabase Setup') + """<body>
+    <main class="card">
+        <header class="hero">
+            <h1>Configure Supabase</h1>
+        </header>
+        <section class="main">
+            <p class="desc">The catalog database the admin addon pushes overrides, metadata and files to.
+            Find the URL and key in the Supabase dashboard under Project Settings &gt; API Keys / Data API.</p>
+            <form method="POST" novalidate>
+                <label>
+                    Project URL
+                    <input name="supabase_url" type="url" value="{url_value}" placeholder="https://abcdefgh.supabase.co" required>
+                </label>
+                <label>
+                    Publishable (anon) key
+                    <input name="supabase_key" type="text" value="{key_value}" required>
+                    <span class="hint">sb_publishable_... or the legacy anon key. Never the secret/service_role key.</span>
+                </label>
+                <label>
+                    Admin email
+                    <input name="supabase_email" type="email" value="{email_value}" autocomplete="username" required>
+                </label>
+                <label>
+                    Admin password
+                    <input name="supabase_password" type="password" value="" autocomplete="current-password">
+                    <span class="hint">Leave empty to keep the saved password.</span>
+                </label>
+                <button type="submit">Save Supabase Settings</button>
+            </form>
+        </section>
+        <div class="foot">After saving, return to Kodi.</div>
+    </main>
+</body>
+</html>
+"""

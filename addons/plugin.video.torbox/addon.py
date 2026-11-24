@@ -35,7 +35,7 @@ from torbox_common import (
 )
 from torbox_download import download_library_item
 from torbox_library import cleanup_library, export_library, export_library_item
-from torbox_setup import add_account, configure_providers
+from torbox_setup import add_account, configure_providers, configure_supabase
 from torbox_subtitles import add_subtitles, find_local_subtitles, search_subs_imdb_id
 from torbox_tmdb import get_external_id_from_tmdb, search_tmdb_movies, search_tmdb_tvshows
 from torbox_text import (
@@ -78,6 +78,8 @@ from torbox_text import (
     MENU_IMPORT_OVERRIDES,
     MENU_MANAGE_OVERRIDES,
     MENU_EXPORT_OVERRIDES,
+    MENU_CONFIGURE_SUPABASE,
+    MENU_PUSH_SUPABASE,
     MENU_SEARCH,
     MENU_RECONNECT_LOG,
     MENU_SETTINGS,
@@ -224,6 +226,12 @@ def management_menu():
 
     li = xbmcgui.ListItem(label=MENU_IMPORT_OVERRIDES)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'import_overrides'}), li, isFolder=False)
+
+    li = xbmcgui.ListItem(label=MENU_PUSH_SUPABASE)
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'push_supabase'}), li, isFolder=False)
+
+    li = xbmcgui.ListItem(label=MENU_CONFIGURE_SUPABASE)
+    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'configure_supabase'}), li, isFolder=False)
 
     li = xbmcgui.ListItem(label=MENU_CLEANUP_LIBRARY)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'cleanup_library'}), li, isFolder=False)
@@ -1329,6 +1337,11 @@ def router():
         export_overrides()
     elif action == 'import_overrides':
         import_overrides()
+    elif action == 'push_supabase':
+        from torbox_sync import push_to_supabase
+        push_to_supabase()
+    elif action == 'configure_supabase':
+        configure_supabase()
     elif action == 'top_movies':
         top_movies(skip=params.get('skip', 0))
     elif action == 'top_series':

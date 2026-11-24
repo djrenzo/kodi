@@ -27,6 +27,10 @@ This document captures the current architecture, behavior, conventions, and impl
   - Uses centralized HTML templates and supports prefilled URL/username.
 - `torbox_text.py`
   - Centralized user-facing strings and setup HTML templates (main form + success + error pages).
+- `torbox_supabase.py`
+  - Minimal Supabase client (Auth password/refresh grants + PostgREST select/insert/upsert/delete/rpc).
+- `torbox_sync.py`
+  - Management > Push overrides & library to Supabase (see "Supabase Catalog" below).
 
 ## High-Level Runtime Flow
 1. Kodi calls `addon.py` with query params.
@@ -84,6 +88,25 @@ identifies new folders and skips ones that stay unidentified; there is no regex 
 Library folders are named `Title (Year) {tmdb-ID}` (`library_folder_name`) so same-named titles
 never share a folder; exports/downloads rename older `Title (Year)` / `Title` folders and their
 same-name files in place (`migrate_legacy_folder`). `exports.json` records what was exported per account.
+
+## Supabase Catalog (admin side)
+This addon is the admin of a Supabase catalog that a read-only user addon will load. The schema is in
+`/supabase/migrations/` and the setup guide is `/supabase/README.md` (both at the repo root, not packaged).
+- Settings `supabase_url`, `supabase_key` (publishable/anon key), `supabase_email`, `supabase_password`
+  can be set via Management > Configure Supabase via Phone (setup server mode `supabase`, port 8767).
+  The session is cached in profile `supabase_session.json`.
+- Keep-alive: `service.py` runs a daemon thread that calls `SupabaseClient.ping()` (rpc `is_member`)
+  30 s after Kodi starts and then every 24 h, because Free projects pause after 7 days idle. It does
+  nothing when Supabase isn't configured; failures only log a warning. The import is lazy so a Supabase
+  problem can't stop the stream proxy.
+- The push (`torbox_sync.push_to_supabase`) lists every file of every account. It numbers the files the
+  same way the export does (`number_files`, without asking for seasons), fetches TMDB details
+  (`append_to_response=external_ids,season/N...`) for new/changed/stale titles, and upserts `titles`,
+  `seasons`, `episodes`, `overrides`, `subtitles`, `media_files` and `accounts`.
+- Stale rows are removed by timestamp: rows are written with the run's timestamp and older ones are
+  deleted (files only for completely listed accounts; overrides only after confirmation).
+- Access is enforced in the database: RLS gives `members` read access and only `role = 'admin'`
+  write access. Pushing needs `is_admin()`.
 
 ## Library Export Behavior
 - Movies:

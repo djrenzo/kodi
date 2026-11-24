@@ -10,11 +10,13 @@ from torbox_common import ADDON, APP_NAME, save_credentials
 from torbox_text import (
     DIALOG_SETUP_SCAN_PROVIDERS_LABEL,
     DIALOG_SETUP_SCAN_LABEL,
+    DIALOG_SETUP_SCAN_SUPABASE_LABEL,
     NOTIFY_INVALID_ACCOUNT_SLOT,
     PROVIDERS_SETUP_PAGE_HTML,
     SETUP_PAGE_HTML,
     SETUP_RESULT_ERROR_HTML,
     SETUP_RESULT_OK_HTML,
+    SUPABASE_SETUP_PAGE_HTML,
 )
 
 _server = None
@@ -39,6 +41,43 @@ def _get_provider_prefill_settings():
     }
 
 
+def _supabase_form_error(form):
+    """Validate and save the Supabase form; returns an error message or None."""
+    url = form.get('supabase_url', [''])[0].strip().rstrip('/')
+    key = form.get('supabase_key', [''])[0].strip()
+    email = form.get('supabase_email', [''])[0].strip()
+    password = form.get('supabase_password', [''])[0]
+
+    if not url or not key or not email:
+        return 'Please go back and fill in the project URL, key and email.'
+    if not url.startswith('https://'):
+        return 'The project URL must start with https:// (e.g. https://abcdefgh.supabase.co).'
+    if key.startswith('sb_secret_') or '"service_role"' in _jwt_payload(key):
+        return 'That is the secret (service_role) key. Use the publishable/anon key instead.'
+    if not password and not ADDON.getSettingString('supabase_password'):
+        return 'Please go back and enter the password.'
+
+    ADDON.setSettingString('supabase_url', url)
+    ADDON.setSettingString('supabase_key', key)
+    ADDON.setSettingString('supabase_email', email)
+    if password:
+        ADDON.setSettingString('supabase_password', password)
+    return None
+
+
+def _jwt_payload(token):
+    """Decoded payload of a legacy JWT key ('' when it isn't one)."""
+    import base64
+
+    parts = token.split('.')
+    if len(parts) != 3:
+        return ''
+    try:
+        return base64.urlsafe_b64decode(parts[1] + '=' * (-len(parts[1]) % 4)).decode('utf-8', 'replace')
+    except Exception:
+        return ''
+
+
 def _is_valid_aiostreams_template(value):
     template = (value or '').strip()
     if not template:
@@ -60,7 +99,14 @@ class ConfigHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         try:
-            if _server_mode == 'providers':
+            if _server_mode == 'supabase':
+                html = SUPABASE_SETUP_PAGE_HTML.format(
+                    app_name=APP_NAME,
+                    url_value=escape(ADDON.getSettingString('supabase_url'), quote=True),
+                    key_value=escape(ADDON.getSettingString('supabase_key'), quote=True),
+                    email_value=escape(ADDON.getSettingString('supabase_email'), quote=True),
+                )
+            elif _server_mode == 'providers':
                 prefill = _get_provider_prefill_settings()
                 html = PROVIDERS_SETUP_PAGE_HTML.format(
                     app_name=APP_NAME,
@@ -111,7 +157,17 @@ class ConfigHandler(BaseHTTPRequestHandler):
             data = self.rfile.read(length).decode('utf-8')
             form = parse_qs(data)
 
-            if _server_mode == 'providers':
+            if _server_mode == 'supabase':
+                error = _supabase_form_error(form)
+                if error:
+                    self.send_response(400)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.end_headers()
+                    self.wfile.write(
+                        SETUP_RESULT_ERROR_HTML.format(app_name=APP_NAME, error_message=escape(error)).encode('utf-8')
+                    )
+                    return
+            elif _server_mode == 'providers':
                 aiostreams_url = form.get('aiostreams_url', [''])[0].strip()
                 tmdb_key = form.get('tmdb_key', [''])[0].strip()
                 wyzie_key = form.get('wyzie_key', [''])[0].strip()
@@ -286,6 +342,29 @@ def configure_providers():
     setup_url = 'http://{}:8766'.format(ip)
 
     dialog = QRDialog(setup_url, DIALOG_SETUP_SCAN_PROVIDERS_LABEL.format(APP_NAME))
+    _qr_window = dialog
+
+    dialog.doModal()
+
+    del dialog
+    _qr_window = None
+
+    if _server is not None:
+        try:
+            _server.shutdown()
+            _server.server_close()
+        except Exception:
+            pass
+
+
+def configure_supabase():
+    global _qr_window
+
+    _start_setup_server(mode='supabase', port=8767)
+    ip = _get_local_ip()
+    setup_url = 'http://{}:8767'.format(ip)
+
+    dialog = QRDialog(setup_url, DIALOG_SETUP_SCAN_SUPABASE_LABEL.format(APP_NAME))
     _qr_window = dialog
 
     dialog.doModal()

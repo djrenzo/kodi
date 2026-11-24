@@ -42,6 +42,12 @@
     <setting id="library_source_created" type="bool" label="Is library created" default="false"/>
     <setting id="library_overrides_path" type="text" label="Library Overrides Path" default="https://raw.githubusercontent.com/djrenzo/EPG/main/overrides.json"/>
   </category>
+  <category label="Supabase">
+    <setting id="supabase_url" type="text" label="Project URL (https://xxxx.supabase.co)" default=""/>
+    <setting id="supabase_key" type="text" label="Publishable (anon) key" option="hidden" default=""/>
+    <setting id="supabase_email" type="text" label="Admin email" default=""/>
+    <setting id="supabase_password" type="text" label="Admin password" option="hidden" default=""/>
+  </category>
   <category label="Downloads">
     <setting id="download_path" type="folder" label="Download Folder (local or smb://)" option="writeable" default=""/>
   </category>
