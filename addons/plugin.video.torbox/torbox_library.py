@@ -40,6 +40,9 @@ from torbox_text import (
     DIALOG_LIBRARY_EXPORT_ALREADY,
     DIALOG_LIBRARY_EXPORT_DONE,
     DIALOG_LIBRARY_EXPORT_SKIPPED,
+    DIALOG_LIBRARY_EXPORT_SUBS,
+    DIALOG_LIBRARY_EXPORT_SUBS_ADJUSTED,
+    DIALOG_LIBRARY_EXPORT_SUBS_FAILED,
     DIALOG_LIBRARY_PATH_NOT_CONFIGURED,
     DIALOG_LIBRARY_SOURCE_ADDED,
     NOTIFY_ACCOUNT_NOT_FOUND,
@@ -49,6 +52,8 @@ from torbox_text import (
     PROGRESS_CLEANUP_TITLE,
     PROGRESS_IDENTIFY,
 )
+from torbox_http import download
+from torbox_srt import adjustments_of, apply_adjustments
 from torbox_identify import identify_items, identify_one, parse_release_name, pending_folders
 from torbox_webdav import parse_propfind, propfind
 
@@ -431,7 +436,62 @@ def normalize_collection_path(child_path):
     return normalized_path
 
 
-def _export_collection(account, account_index, raw_name, child_path, overrides, movies_root, tvshows_root):
+# '.es.srt', '.en.hi.srt', '.pt-BR.srt', '.srt': the part of a subtitle file name after the video's name.
+_SUBTITLE_SUFFIX = re.compile(r'((?:\.[A-Za-z]{2,3}(?:-[A-Za-z]{2})?)?(?:\.(?:hi|sdh|forced))?\.(?:srt|ass|ssa|vtt|sub))$',
+                              re.IGNORECASE)
+
+
+def new_subtitle_stats():
+    return {'downloaded': 0, 'adjusted': 0, 'existing': 0, 'failed': 0}
+
+
+def _export_subtitles(raw_name, info, folder, targets, stats, overwrite):
+    """Download the subtitles picked for this folder (overrides 'subs') next to the STRMs
+    just written, and apply their stored FPS/time adjustments again.
+    targets: {None: movie STRM name} or {(season, episode): episode STRM name}, without
+    '.strm'. A subtitle's stored fileName is the library name it was picked for
+    ('<video name>.es.srt'); it is re-attached to the STRM with the same SxxEyy (shows)
+    or to the movie's STRM, so renamed folders/titles still get it.
+    overwrite: replace subtitle files already in the library (re-export everything);
+    otherwise only missing ones are downloaded."""
+    wanted = {}
+    for sub in info.get('subs') or []:
+        url = (sub.get('url') or '').strip()
+        file_name = (sub.get('fileName') or '').strip()
+        match = _SUBTITLE_SUFFIX.search(file_name)
+        if not url or not match:
+            continue
+        if info['media_type'] == 'movie':
+            base = targets.get(None)
+        else:
+            base = targets.get(extract_episode_info(file_name))
+        if not base:
+            log('Export: no exported video for subtitle "{}" of "{}"'.format(file_name, raw_name))
+            continue
+        wanted[base + match.group(1)] = sub  # picked later for the same file wins
+
+    for name, sub in sorted(wanted.items()):
+        url = sub['url'].strip()
+        path = join_path(folder, name)
+        if not overwrite and xbmcvfs.exists(path):
+            stats['existing'] += 1
+        elif download(url, path):
+            stats['downloaded'] += 1
+            adjust = {}
+            try:
+                adjust = adjustments_of(sub)
+                if apply_adjustments(path, adjust):
+                    stats['adjusted'] += 1
+            except Exception as exc:
+                log('Export: could not adjust subtitle "{}" ({}): {}'.format(name, adjust, exc), xbmc.LOGWARNING)
+            log('Export: downloaded subtitle "{}"{}'.format(name, ' adjusted {}'.format(adjust) if adjust else ''))
+        else:
+            stats['failed'] += 1
+            log('Export: could not download subtitle "{}" from {}'.format(name, url), xbmc.LOGWARNING)
+
+
+def _export_collection(account, account_index, raw_name, child_path, overrides, movies_root, tvshows_root,
+                       sub_stats=None, overwrite_subs=False):
     info = resolve_media_info(raw_name, overrides)
     media_type = info['media_type']
     clean_title = info['title']
@@ -471,6 +531,8 @@ def _export_collection(account, account_index, raw_name, child_path, overrides, 
         )
         write_text_file(strm_path, plugin_url)
         _mark_exported(account_index, raw_name, info, movie_folder, 1)
+        _export_subtitles(raw_name, info, movie_folder, {None: folder_name},
+                          new_subtitle_stats() if sub_stats is None else sub_stats, overwrite_subs)
         return 1
 
     show_folder = migrate_legacy_folder(tvshows_root, info)
@@ -481,8 +543,10 @@ def _export_collection(account, account_index, raw_name, child_path, overrides, 
 
     created = 0
     written = {}  # remote path -> STRM name
+    targets = {}  # (season, episode) -> STRM name without .strm, for the subtitles
     for episode, season, episode_no in numbered_episodes(raw_name, walk_webdav(account, normalized_path), overrides):
-        strm_name = '{}.strm'.format(episode_basename(clean_title, season, episode_no))
+        targets[(season, episode_no)] = episode_basename(clean_title, season, episode_no)
+        strm_name = '{}.strm'.format(targets[(season, episode_no)])
         strm_path = join_path(show_folder, strm_name)
         written[_normalize_remote_path(episode.get('full_url', ''))] = strm_name
         plugin_url = build_url(
@@ -500,7 +564,20 @@ def _export_collection(account, account_index, raw_name, child_path, overrides, 
         _remove_renumbered_strms(show_folder, account_index, written)
         # The season may have been asked during this export; log it with the result.
         _mark_exported(account_index, raw_name, resolve_media_info(raw_name, overrides), show_folder, created)
+        _export_subtitles(raw_name, info, show_folder, targets,
+                          new_subtitle_stats() if sub_stats is None else sub_stats, overwrite_subs)
     return created
+
+
+def subtitle_summary(stats):
+    message = ''
+    if stats['downloaded']:
+        message += DIALOG_LIBRARY_EXPORT_SUBS.format(stats['downloaded'])
+        if stats['adjusted']:
+            message += DIALOG_LIBRARY_EXPORT_SUBS_ADJUSTED.format(stats['adjusted'])
+    if stats['failed']:
+        message += DIALOG_LIBRARY_EXPORT_SUBS_FAILED.format(stats['failed'])
+    return message
 
 
 def _remove_renumbered_strms(show_folder, account_index, written):
@@ -581,6 +658,7 @@ def export_library(account_index):
     overrides = load_overrides()
     created = 0
     skipped = 0
+    sub_stats = new_subtitle_stats()
 
     for root_item in folders:
         raw_name = root_item['name']
@@ -597,9 +675,11 @@ def export_library(account_index):
             overrides,
             movies_root,
             tvshows_root,
+            sub_stats,
+            overwrite_subs=not only_new,
         )
 
-    message = DIALOG_LIBRARY_EXPORT_DONE.format(created)
+    message = DIALOG_LIBRARY_EXPORT_DONE.format(created) + subtitle_summary(sub_stats)
     if already:
         message += DIALOG_LIBRARY_EXPORT_ALREADY.format(already)
     if skipped:
@@ -645,6 +725,7 @@ def export_library_item(account_index, folder_name, remote_path):
             return
         overrides = load_overrides()
 
+    sub_stats = new_subtitle_stats()
     created = _export_collection(
         account,
         account_index,
@@ -653,8 +734,10 @@ def export_library_item(account_index, folder_name, remote_path):
         overrides,
         movies_root,
         tvshows_root,
+        sub_stats,
+        overwrite_subs=True,
     )
-    xbmcgui.Dialog().ok(APP_NAME, DIALOG_LIBRARY_EXPORT_DONE.format(created))
+    xbmcgui.Dialog().ok(APP_NAME, DIALOG_LIBRARY_EXPORT_DONE.format(created) + subtitle_summary(sub_stats))
 
     if not ADDON.getSettingBool('library_source_created'):
         ensure_video_source('TorBox Library', library_root)

@@ -11,10 +11,9 @@ MENU_TORBOX = '[COLOR springgreen]TorBox[/COLOR]'
 MENU_MANAGEMENT = '[COLOR yellow]Management[/COLOR]'
 MENU_CONFIGURE_PROVIDERS = '[COLOR yellow]Configure provider keys via Phone[/COLOR]'
 MENU_MANAGE_OVERRIDES = '[COLOR yellow]Manage show overrides[/COLOR]'
-MENU_EXPORT_OVERRIDES = '[COLOR yellow]Export overrides[/COLOR]'
-MENU_IMPORT_OVERRIDES = '[COLOR yellow]Import overrides[/COLOR]'
 MENU_CLEANUP_LIBRARY = '[COLOR yellow]Cleanup library (remove titles no longer on TorBox)[/COLOR]'
 MENU_RECONNECT_LOG = '[COLOR yellow]View stream reconnect log[/COLOR]'
+MENU_FETCH_SUPABASE = '[COLOR yellow]Fetch overrides from Supabase[/COLOR]'
 MENU_PUSH_SUPABASE = '[COLOR yellow]Push overrides & library to Supabase[/COLOR]'
 MENU_CONFIGURE_SUPABASE = '[COLOR yellow]Configure Supabase via Phone[/COLOR]'
 MENU_SETTINGS = '[COLOR gray]Settings[/COLOR]'
@@ -83,6 +82,9 @@ DIALOG_SUBS_DOWNLOAD_FAILED = 'Failed to download subtitle.\nCheck the log for d
 DIALOG_LIBRARY_PATH_NOT_CONFIGURED = 'Library path not configured'
 DIALOG_ASK_SEASON = '{} episode file(s) in "{}" have no season number. Season:'
 DIALOG_LIBRARY_EXPORT_DONE = 'Export complete\n\n{} STRM files generated'
+DIALOG_LIBRARY_EXPORT_SUBS = '\n{} subtitle(s) downloaded'
+DIALOG_LIBRARY_EXPORT_SUBS_ADJUSTED = ' ({} with FPS/time adjustments applied)'
+DIALOG_LIBRARY_EXPORT_SUBS_FAILED = '\n{} subtitle(s) could not be downloaded (see the Kodi log)'
 DIALOG_LIBRARY_SOURCE_ADDED = (
     'TorBox Library source has been added.\n\n'
     'Go to Videos - Files - TorBox Library\n'
@@ -643,6 +645,10 @@ DIALOG_SUPABASE_DELETE_OVERRIDES = (
     '{} override(s) in Supabase no longer exist here. Delete them from Supabase?\n\n{}'
 )
 DIALOG_SUPABASE_FAILED = 'Push to Supabase failed:\n\n{}'
+DIALOG_SUPABASE_RUN_MIGRATIONS = (
+    '\n\nThe database is missing a newer change. Run the SQL files in supabase/migrations that you '
+    'haven\'t run yet (SQL Editor > New query), then push again.'
+)
 DIALOG_SUPABASE_DONE = (
     'Pushed to Supabase\n\n'
     '{titles} title(s) ({tmdb_fetched} with fresh TMDB details), {seasons} season(s), {episodes} episode(s)\n'
@@ -651,8 +657,31 @@ DIALOG_SUPABASE_DONE = (
     '{unidentified_folders} folder(s) are not identified (pushed without a title).'
 )
 DIALOG_SUPABASE_UNREACHABLE = '\n\nNot completely listed (their missing files were kept): {}'
+DIALOG_SUPABASE_FETCH_EMPTY = 'There are no overrides in Supabase yet. Push them from the admin box first.'
+DIALOG_SUPABASE_FETCH_UP_TO_DATE = (
+    'Your overrides already match Supabase ({total} override(s)).\n'
+    '{local_only} override(s) exist only here.'
+)
+DIALOG_SUPABASE_FETCH_CONFIRM = (
+    'Fetched {total} override(s) from Supabase:\n'
+    '{new} new, {changed} different from yours, {same} the same.\n'
+    '{local_only} override(s) exist only here and are kept.\n\n'
+    'Update your overrides?'
+)
+DIALOG_SUPABASE_FETCH_REPLACE = (
+    '{} override(s) differ from the Supabase version. Replace yours with the Supabase version?\n\n'
+    'No keeps your version (e.g. if you changed it here and haven\'t pushed yet).\n\n{}'
+)
+DIALOG_SUPABASE_FETCH_DONE = (
+    'Overrides updated from Supabase\n\n'
+    '{added} added, {replaced} replaced, {kept} of yours kept.\n'
+    'The previous file was saved as overrides.backup.json.\n\n'
+    'Run Export Library to add new titles (and their subtitles) to the Kodi library.'
+)
+DIALOG_SUPABASE_FETCH_FAILED = 'Fetching overrides from Supabase failed:\n\n{}'
 NOTIFY_SUPABASE_CANCELLED = 'Push to Supabase cancelled'
 NOTIFY_SUPABASE_SAVED = 'Supabase connection saved'
+PROGRESS_SUPABASE_FETCH = 'Fetching overrides from Supabase...'
 PROGRESS_SUPABASE_LOGIN = 'Logging in to Supabase...'
 PROGRESS_SUPABASE_LIST = 'Listing {}: folder {}/{}'
 PROGRESS_SUPABASE_TMDB = 'Fetching TMDB details: {}/{}'

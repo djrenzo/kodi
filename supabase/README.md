@@ -12,7 +12,7 @@ library to Supabase* uploads everything it knows to a Supabase (Postgres) databa
 | `seasons` | TV season (TMDB) | name, overview, poster URL, air date, episode count |
 | `episodes` | TV episode (TMDB) | name, overview, still URL, air date, runtime, rating. Only for seasons that are on TorBox |
 | `overrides` | TorBox root folder | the `overrides.json` entry: `auto`/`manual` source, title, ids, thumb, plot, season override, force-season flag, plus the raw JSON |
-| `subtitles` | picked subtitle | language, hearing impaired, file name, download URL, season/episode |
+| `subtitles` | picked subtitle | language, hearing impaired, file name, download URL, season/episode, FPS conversion (`fps_from` → `fps_to`) and time shift (`shift_ms`) to apply after downloading |
 | `media_files` | video file on TorBox | account, folder, title, season/episode (numbered like the library export, so season overrides are applied), size, main-feature flag, WebDAV URL, **`stream_url` with the WebDAV login embedded** |
 | `accounts` | TorBox account | name, WebDAV URL, username |
 | `sync_runs` | push | start/finish time, who pushed, counts |
@@ -58,9 +58,14 @@ details are over 30 days old. You can also choose *refresh every title*.
 
 ### 2. Create the tables
 1. Dashboard > **SQL Editor** > **New query**.
-2. Paste the whole contents of
-   [`migrations/20261124000000_torbox_catalog.sql`](migrations/20261124000000_torbox_catalog.sql)
-   and click **Run**. It should report *Success. No rows returned*.
+2. Run every file in [`migrations/`](migrations/) once, oldest first (the file names start with
+   the date). For each file: paste its whole contents and click **Run**. It should report
+   *Success. No rows returned*.
+   - [`20261124000000_torbox_catalog.sql`](migrations/20261124000000_torbox_catalog.sql): the tables and access rules
+   - [`20261124120000_subtitle_adjustments.sql`](migrations/20261124120000_subtitle_adjustments.sql): subtitle FPS/time adjustments
+
+When the addon is updated with a new migration file, run just that file. If you push without it,
+the push fails with a message saying the database is missing a newer change.
 
 ### 3. Lock down sign-ups
 Dashboard > **Authentication** > **Sign In / Providers**: turn **off** *Allow new users to sign up*
@@ -87,7 +92,8 @@ and click *Save*. Leave the *Email* provider enabled, because the addons log in 
 
 ### 5. Get the URL and key
 - **Project URL**: Dashboard > **Project Settings** > **Data API** (or the *Connect* button):
-  `https://<project-ref>.supabase.co`.
+  `https://<project-ref>.supabase.co`. If it's shown with `/rest/v1` at the end, that's fine: the
+  addon keeps only the `https://<project-ref>.supabase.co` part.
 - **Publishable key**: **Project Settings** > **API Keys**: the `sb_publishable_...` key. Older
   projects can use the *anon* key under *Legacy API keys* instead.
   **Never** use the `sb_secret_...` / `service_role` key in an addon. It bypasses all security.
@@ -104,6 +110,20 @@ details for every title and lists every file on every account. With ~200 titles 
 minute. Later pushes are much faster. When it finishes, a summary dialog shows the counts.
 
 Check the data in Dashboard > **Table Editor**.
+
+Once Supabase is configured, Management shows *Fetch overrides from Supabase* and *Push…* instead
+of *Configure Supabase via Phone*. To change the connection later, use addon settings > *Supabase*.
+
+### 8. Restoring overrides on another (or a reset) box
+TorBox > **Management** > **Fetch overrides from Supabase** downloads the overrides of the last push
+and merges them into `overrides.json`:
+- Folders that are only in Supabase are added.
+- Folders whose local entry differs are replaced only if you say yes. Say no if you changed them
+  locally and haven't pushed yet.
+- Folders that are only local are kept.
+
+The previous file is saved as `overrides.backup.json` in the addon profile. Afterwards, run *Export
+Library* to add the titles to the Kodi library.
 
 ## Reading the catalog (for the user addon)
 
@@ -129,6 +149,10 @@ GET /rest/v1/episodes?title_id=eq.123&order=season_number,episode_number
 GET /rest/v1/media_files?title_id=eq.123&select=season_number,episode_number,file_name,stream_url&order=season_number,episode_number
 GET /rest/v1/subtitles?title_id=eq.123
 ```
+
+After downloading a subtitle, apply its adjustments like the admin addon does: if `fps_from` and
+`fps_to` are set, multiply every timestamp by `fps_from / fps_to`; then add `shift_ms` to every
+timestamp (`torbox_srt.apply_adjustments_text` does both).
 
 Responses return at most 1000 rows. For bigger tables, page with `limit` / `offset`.
 `torbox_supabase.SupabaseClient.select_all` already does this paging and can be reused.

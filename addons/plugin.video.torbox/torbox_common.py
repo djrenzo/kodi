@@ -3,7 +3,6 @@ import json
 import os
 import re
 import sys
-import time
 from typing import List, Optional, TypedDict
 from urllib.parse import quote_plus, urlencode
 
@@ -11,17 +10,15 @@ import xbmc
 import xbmcaddon
 import xbmcvfs
 import xbmcgui
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
-
-from torbox_paste import paste_and_show_dialog
 
 ADDON = xbmcaddon.Addon()
 ADDON_ID = ADDON.getAddonInfo('id')
 ADDON_PATH = xbmcvfs.translatePath(ADDON.getAddonInfo('path'))
 PROFILE_PATH = xbmcvfs.translatePath(ADDON.getAddonInfo('profile'))
-HANDLE = int(sys.argv[1])
-BASE_URL = sys.argv[0]
+# Only plugin invocations get these arguments; the background service imports this
+# module too (e.g. via torbox_supabase) and has none.
+HANDLE = int(sys.argv[1]) if len(sys.argv) > 1 else -1
+BASE_URL = sys.argv[0] if sys.argv else ''
 MAX_ACCOUNTS = 5
 APP_NAME = 'TorBox'
 
@@ -203,180 +200,6 @@ def save_overrides(data):
             f.write(json.dumps(data, indent=2))
     except Exception as exc:
         log('Failed to save overrides: {}'.format(exc), xbmc.LOGWARNING)
-
-
-def export_overrides():
-    # Build a fresh snapshot so exports are never based on a stale/empty file.
-    data = load_overrides()
-
-    if not os.path.exists(PROFILE_PATH):
-        os.makedirs(PROFILE_PATH, exist_ok=True)
-
-    export_file = os.path.join(PROFILE_PATH, 'overrides.export.json')
-    with open(export_file, 'w', encoding='utf-8') as fh:
-        json.dump(data, fh, indent=2)
-        fh.write('\n')
-        # Keep JSON semantics identical while changing raw bytes each export.
-        # This avoids Catbox serving a previously corrupted deduplicated object.
-        fh.write(' ' * ((time.time_ns() % 11) + 1))
-        fh.write('\n')
-
-    # If no overrides exist, upload a minimal valid JSON object instead of an empty file.
-    if os.path.getsize(export_file) == 0:
-        with open(export_file, 'w', encoding='utf-8') as fh:
-            fh.write('{}\n')
-
-    return paste_and_show_dialog(export_file)
-
-
-def import_overrides():
-    """
-    Fetches the JSON file from the URL configured in addon settings
-    ('library_overrides_path'), compares it with the current overrides,
-    and identifies new overrides. For each new override, prompts the user
-    to export it to the Kodi library and downloads any associated subtitles.
-    All new overrides are automatically imported to the local JSON file.
-    """
-
-    url = ADDON.getSettingString('library_overrides_path').strip()
- 
-    if not url:
-        log('import_overrides: no library_overrides_path configured', xbmc.LOGWARNING)
-        xbmcgui.Dialog().notification(
-            ADDON.getAddonInfo('name'),
-            'No overrides URL configured',
-            xbmcgui.NOTIFICATION_WARNING,
-        )
-        return False
- 
-    try:
-        request = Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urlopen(request, timeout=15) as response:
-            raw = response.read().decode('utf-8')
-    except (HTTPError, URLError) as exc:
-        log('import_overrides: failed to fetch {}: {}'.format(url, exc), xbmc.LOGWARNING)
-        xbmcgui.Dialog().notification(
-            ADDON.getAddonInfo('name'),
-            'Failed to download overrides',
-            xbmcgui.NOTIFICATION_ERROR,
-        )
-        return False
- 
-    try:
-        fetched_data = json.loads(raw)
-    except ValueError as exc:
-        log('import_overrides: invalid JSON from {}: {}'.format(url, exc), xbmc.LOGWARNING)
-        xbmcgui.Dialog().notification(
-            ADDON.getAddonInfo('name'),
-            'Overrides file is not valid JSON',
-            xbmcgui.NOTIFICATION_ERROR,
-        )
-        return False
- 
-    # Load current overrides to compare
-    current_data = load_overrides()
-    dialog = xbmcgui.Dialog()
-    
-    # Find new overrides not yet in current data
-    new_overrides = {}
-    for folder_name, override_data in fetched_data.items():
-        if folder_name not in current_data:
-            new_overrides[folder_name] = override_data
-    
-    # Import all new overrides to JSON automatically
-    current_data.update(fetched_data)
-    save_overrides(current_data)
-    
-    log('import_overrides: successfully merged overrides from {}'.format(url))
-    
-    # For each new override, prompt user if they want to export it to library
-    if new_overrides:
-        log('import_overrides: found {} new override(s)'.format(len(new_overrides)))
-        
-        for folder_name, override_data in new_overrides.items():
-            # Build display text showing override details
-            title = override_data.get('title', folder_name)
-            media_type = override_data.get('type', 'tvshow')
-            has_subs = bool(override_data.get('subs', []))
-            
-            display_text = 'Folder: {}\nTitle: {}\nType: {}'.format(folder_name, title, media_type)
-            if has_subs:
-                subs_count = len(override_data['subs'])
-                display_text += '\nSubtitles: {} file(s)'.format(subs_count)
-            
-            # Prompt user if they want to export this override to library
-            ret = dialog.yesno(
-                ADDON.getAddonInfo('name'),
-                'Export this item to library?\n\n{}'.format(display_text)
-            )
-            
-            if ret:
-                # First, find the account that contains this folder and export it
-                from torbox_library import export_library_item
-                from torbox_webdav import parse_propfind, propfind
-                
-                accounts = get_accounts()
-                account_found = False
-                
-                for account in accounts:
-                    try:
-                        root_xml = propfind(account['url'] + '/', account['username'], account['password'], depth=1)
-                        if root_xml is None:
-                            continue
-                        
-                        root_items = parse_propfind(root_xml, account['url'], '/')
-                        for root_item in root_items:
-                            if not root_item.get('is_collection'):
-                                continue
-                            
-                            raw_name = root_item.get('name')
-                            if raw_name == folder_name:
-                                # Found it! Export this item to the library
-                                remote_path = root_item.get('path', '')
-                                export_library_item(account['index'], folder_name, remote_path)
-                                account_found = True
-                                log('import_overrides: exported collection {} via account {}'.format(folder_name, account['index']))
-                                break
-                        
-                        if account_found:
-                            break
-                    except Exception as exc:
-                        log('import_overrides: error searching account {}: {}'.format(account.get('index'), exc), xbmc.LOGWARNING)
-                        continue
-                
-                if not account_found:
-                    dialog.ok(
-                            ADDON.getAddonInfo('name'),
-                            'Not found:\n\n{}'.format(display_text)
-                            )
-                    log('import_overrides: could not find collection {} in any account'.format(folder_name), xbmc.LOGWARNING)
-                
-                # Now download subtitle files if present
-                from torbox_wyzie import OpenSubtitlesFetcher
-                from torbox_library import get_library_folder_for
-                
-                subs = override_data.get('subs', [])
-                if subs:
-                    library_folder = get_library_folder_for(folder_name)
-                    if library_folder:
-                        sub_fetcher = OpenSubtitlesFetcher()
-                        for sub_info in subs:
-                            sub_url = sub_info.get('url', '').strip()
-                            filename = sub_info.get('fileName', '').strip()
-                            
-                            if sub_url and filename:
-                                dest_path = os.path.join(library_folder, filename)
-                                if sub_fetcher.download_url(sub_url, dest_path):
-                                    log('import_overrides: downloaded subtitle {} for {}'.format(filename, folder_name))
-                                else:
-                                    log('import_overrides: failed to download subtitle {} for {}'.format(filename, folder_name), xbmc.LOGWARNING)
-    
-    xbmcgui.Dialog().notification(
-        ADDON.getAddonInfo('name'),
-        'Overrides imported successfully',
-        xbmcgui.NOTIFICATION_INFO,
-    )
-    return True
 
 
 def extract_episode_info(filename):

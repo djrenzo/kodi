@@ -89,12 +89,30 @@ Library folders are named `Title (Year) {tmdb-ID}` (`library_folder_name`) so sa
 never share a folder; exports/downloads rename older `Title (Year)` / `Title` folders and their
 same-name files in place (`migrate_legacy_folder`). `exports.json` records what was exported per account.
 
+Export also downloads the subtitles stored in the folder's override (`subs`) next to the STRMs it just
+wrote (`_export_subtitles`): the stored `fileName` is re-attached by its SxxEyy (shows) or to the movie STRM,
+keeping its `.lang.srt` suffix, so renamed folders still match. When several entries target the same file the
+last one wins; Add subtitles moves the chosen entry to the end. "Only new" skips subtitle files that exist;
+"Re-export everything" and single-item export overwrite them.
+
+Subtitle FPS/time adjustments made in Add subtitles are stored on the `subs` entry (`fps_from`, `fps_to`,
+`shift_ms`; replaced on every pick, since each pick is a fresh download) and re-applied by the export
+(`torbox_srt.apply_adjustments`: FPS first, then shift; reads/writes via xbmcvfs so smb:// libraries work).
+Push sends them to the `subtitles` columns of the same name (migration `20261124120000_subtitle_adjustments.sql`).
+
 ## Supabase Catalog (admin side)
 This addon is the admin of a Supabase catalog that a read-only user addon will load. The schema is in
 `/supabase/migrations/` and the setup guide is `/supabase/README.md` (both at the repo root, not packaged).
 - Settings `supabase_url`, `supabase_key` (publishable/anon key), `supabase_email`, `supabase_password`
   can be set via Management > Configure Supabase via Phone (setup server mode `supabase`, port 8767).
   The session is cached in profile `supabase_session.json`.
+- Fetch (`torbox_sync.fetch_from_supabase`, Management > Fetch overrides from Supabase) reads
+  `overrides.folder_name,raw` and merges into overrides.json: folders only in Supabase are added,
+  differing ones are replaced only if the user agrees, local-only ones are always kept. The old file is
+  copied to `overrides.backup.json` first. Works with reader logins too. It replaced the legacy
+  Import/Export overrides (catbox upload + `library_overrides_path` URL), which were removed.
+- Management shows Fetch + Push only when `torbox_supabase.is_configured()`, otherwise only
+  Configure Supabase via Phone (reconfigure later under Settings > Supabase).
 - Keep-alive: `service.py` runs a daemon thread that calls `SupabaseClient.ping()` (rpc `is_member`)
   30 s after Kodi starts and then every 24 h, because Free projects pause after 7 days idle. It does
   nothing when Supabase isn't configured; failures only log a warning. The import is lazy so a Supabase

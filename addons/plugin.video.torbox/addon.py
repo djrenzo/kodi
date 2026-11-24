@@ -26,16 +26,15 @@ from torbox_common import (
     get_accounts,
     get_params,
     get_top_catalog,
-    import_overrides,
     load_overrides,
     log,
     save_overrides,
-    export_overrides,
     search_streams,
 )
 from torbox_download import download_library_item
 from torbox_library import cleanup_library, export_library, export_library_item
 from torbox_setup import add_account, configure_providers, configure_supabase
+from torbox_supabase import is_configured as supabase_configured
 from torbox_subtitles import add_subtitles, find_local_subtitles, search_subs_imdb_id
 from torbox_tmdb import get_external_id_from_tmdb, search_tmdb_movies, search_tmdb_tvshows
 from torbox_text import (
@@ -75,11 +74,10 @@ from torbox_text import (
     MENU_CONFIGURE_PROVIDERS,
     MENU_TORBOX,
     MENU_MANAGEMENT,
-    MENU_IMPORT_OVERRIDES,
     MENU_MANAGE_OVERRIDES,
-    MENU_EXPORT_OVERRIDES,
     MENU_CONFIGURE_SUPABASE,
     MENU_PUSH_SUPABASE,
+    MENU_FETCH_SUPABASE,
     MENU_SEARCH,
     MENU_RECONNECT_LOG,
     MENU_SETTINGS,
@@ -221,17 +219,17 @@ def management_menu():
     li = xbmcgui.ListItem(label=MENU_MANAGE_OVERRIDES)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'view_overrides'}), li, isFolder=False)
 
-    li = xbmcgui.ListItem(label=MENU_EXPORT_OVERRIDES)
-    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'export_overrides'}), li, isFolder=False)
+    # Once a Supabase login is set, the phone setup is replaced by the sync actions
+    # (the connection can still be changed under Settings > Supabase).
+    if supabase_configured():
+        li = xbmcgui.ListItem(label=MENU_FETCH_SUPABASE)
+        xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'fetch_supabase'}), li, isFolder=False)
 
-    li = xbmcgui.ListItem(label=MENU_IMPORT_OVERRIDES)
-    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'import_overrides'}), li, isFolder=False)
-
-    li = xbmcgui.ListItem(label=MENU_PUSH_SUPABASE)
-    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'push_supabase'}), li, isFolder=False)
-
-    li = xbmcgui.ListItem(label=MENU_CONFIGURE_SUPABASE)
-    xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'configure_supabase'}), li, isFolder=False)
+        li = xbmcgui.ListItem(label=MENU_PUSH_SUPABASE)
+        xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'push_supabase'}), li, isFolder=False)
+    else:
+        li = xbmcgui.ListItem(label=MENU_CONFIGURE_SUPABASE)
+        xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'configure_supabase'}), li, isFolder=False)
 
     li = xbmcgui.ListItem(label=MENU_CLEANUP_LIBRARY)
     xbmcplugin.addDirectoryItem(HANDLE, build_url({'action': 'cleanup_library'}), li, isFolder=False)
@@ -1333,10 +1331,9 @@ def router():
         add_subtitles(params.get('folder_name', ''), _get_account_param(params))
     elif action == 'view_overrides':
         view_overrides()
-    elif action == 'export_overrides':
-        export_overrides()
-    elif action == 'import_overrides':
-        import_overrides()
+    elif action == 'fetch_supabase':
+        from torbox_sync import fetch_from_supabase
+        fetch_from_supabase()
     elif action == 'push_supabase':
         from torbox_sync import push_to_supabase
         push_to_supabase()

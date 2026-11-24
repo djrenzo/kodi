@@ -2,6 +2,7 @@
 keeps the Supabase project awake."""
 
 import threading
+import traceback
 
 import xbmc
 
@@ -37,7 +38,7 @@ def _keep_alive():
         try:
             _ping_supabase()
         except Exception as exc:
-            _log('Keep-alive ping crashed: {}'.format(exc), xbmc.LOGERROR)
+            _log('Keep-alive ping crashed: {}\n{}'.format(exc, traceback.format_exc()), xbmc.LOGERROR)
         if monitor.waitForAbort(PING_INTERVAL):
             return
 

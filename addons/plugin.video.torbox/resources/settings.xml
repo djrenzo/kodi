@@ -40,7 +40,6 @@
     <setting id="library_scraper" type="enum" label="Metadata scraper" values="TheMovieDB|TheTVDB" default="0"/>
     <setting id="library_path" type="folder" label="Library Export Folder" default="special://profile/addon_data/plugin.video.torbox/library/" />
     <setting id="library_source_created" type="bool" label="Is library created" default="false"/>
-    <setting id="library_overrides_path" type="text" label="Library Overrides Path" default="https://raw.githubusercontent.com/djrenzo/EPG/main/overrides.json"/>
   </category>
   <category label="Supabase">
     <setting id="supabase_url" type="text" label="Project URL (https://xxxx.supabase.co)" default=""/>

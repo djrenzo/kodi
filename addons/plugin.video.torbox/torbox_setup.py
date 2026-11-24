@@ -7,6 +7,7 @@ from urllib.parse import parse_qs
 import xbmcgui
 
 from torbox_common import ADDON, APP_NAME, save_credentials
+from torbox_supabase import project_url
 from torbox_text import (
     DIALOG_SETUP_SCAN_PROVIDERS_LABEL,
     DIALOG_SETUP_SCAN_LABEL,
@@ -43,7 +44,7 @@ def _get_provider_prefill_settings():
 
 def _supabase_form_error(form):
     """Validate and save the Supabase form; returns an error message or None."""
-    url = form.get('supabase_url', [''])[0].strip().rstrip('/')
+    url = project_url(form.get('supabase_url', [''])[0])
     key = form.get('supabase_key', [''])[0].strip()
     email = form.get('supabase_email', [''])[0].strip()
     password = form.get('supabase_password', [''])[0]

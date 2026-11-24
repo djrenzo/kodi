@@ -5,7 +5,7 @@ import xbmcgui
 
 from torbox_common import APP_NAME, VIDEO_EXTS, extract_episode_info, load_overrides, log, save_overrides
 from torbox_library import get_library_folder_for
-from torbox_srt import convert_srt_fps, shift_srt_time
+from torbox_srt import ADJUSTMENT_KEYS, apply_adjustments
 from torbox_wyzie import OpenSubtitlesFetcher, WyzieFetcher
 from torbox_text import (
     DIALOG_LIBRARY_SUBS_EXPORT_FIRST,
@@ -77,28 +77,55 @@ def find_local_subtitles(strm_path):
     return sorted(found, key=lambda value: value.lower())
 
 
-def _apply_srt_adjustments(dialog, dest_path):
+def _ask_srt_adjustments(dialog, dest_path):
+    """Ask for an FPS conversion and a time shift, apply them to the downloaded file and
+    return what was applied ({} if nothing), so it can be stored with the subtitle."""
+    adjust = {}
     if dialog.yesno(APP_NAME, 'Do you want to change the subtitle FPS?'):
         old_fps = dialog.input('Enter old FPS:', defaultt='23.976')
         if old_fps:
             new_fps = dialog.input('Enter new FPS:', defaultt='25')
             if new_fps:
                 try:
-                    convert_srt_fps(dest_path, dest_path, old_fps=float(old_fps), new_fps=float(new_fps))
-                except (ValueError, Exception) as exc:
-                    log('Error converting FPS: {}'.format(exc))
+                    old_value, new_value = float(old_fps), float(new_fps)
+                    if old_value > 0 and new_value > 0 and old_value != new_value:
+                        adjust['fps_from'], adjust['fps_to'] = old_value, new_value
+                except ValueError as exc:
+                    log('Invalid FPS: {}'.format(exc))
 
     if dialog.yesno(APP_NAME, 'Do you want to shift the subtitle time?'):
         direction = dialog.yesno(APP_NAME, 'Delay subtitles? (No = advance earlier)')
         offset_str = dialog.input('Enter offset in milliseconds:', defaultt='0', type=xbmcgui.INPUT_NUMERIC)
         if offset_str:
-            offset_ms = int(offset_str)
-            if not direction:
-                offset_ms = -offset_ms
             try:
-                shift_srt_time(dest_path, dest_path, offset_ms=offset_ms)
-            except (ValueError, Exception) as exc:
-                log('Error shifting subtitle time: {}'.format(exc))
+                offset_ms = int(offset_str)
+            except ValueError:
+                offset_ms = 0
+            if offset_ms:
+                adjust['shift_ms'] = offset_ms if direction else -offset_ms
+
+    try:
+        apply_adjustments(dest_path, adjust)
+    except Exception as exc:
+        log('Error adjusting subtitle {}: {}'.format(dest_path, exc), xbmc.LOGWARNING)
+        return {}
+    return adjust
+
+
+def _remember_subtitle(folder_name, metadata, adjust):
+    """Store the subtitle that is now in the library in the folder's overrides 'subs'.
+    An entry with the same URL is replaced, so its adjustments always describe the file
+    on disk, and it moves to the end: for the same file the export uses the last entry,
+    i.e. the subtitle picked most recently."""
+    overrides = load_overrides()  # reload: don't overwrite edits saved since add_subtitles started
+    override = overrides.get(folder_name, {})
+    subs = override.get('subs', [])
+    previous = next((saved for saved in subs if saved.get('url') == metadata['url']), {})
+    entry = {key: value for key, value in dict(previous, **metadata).items() if key not in ADJUSTMENT_KEYS}
+    entry.update(adjust)
+    override['subs'] = [saved for saved in subs if saved.get('url') != metadata['url']] + [entry]
+    overrides[folder_name] = override
+    save_overrides(overrides)
 
 
 def _notify_saved(dialog, dest_path, target_filename):
@@ -152,12 +179,15 @@ def add_subtitles(folder_name, account_index):
 
         idx = dialog.select(DIALOG_SUBS_EXISTING, [existing_label(s) for s in existing_subs])
         if idx >= 0:
-            subtitle_url = existing_subs[idx]['url']
-            if not fetcher.download_url(subtitle_url, dest_path):
+            chosen = existing_subs[idx]
+            if not fetcher.download_url(chosen['url'], dest_path):
                 dialog.ok(APP_NAME, DIALOG_SUBS_DOWNLOAD_FAILED)
                 return
             _notify_saved(dialog, dest_path, target_filename)
-            _apply_srt_adjustments(dialog, dest_path)
+            # A fresh download: the adjustments asked now replace the stored ones.
+            adjust = _ask_srt_adjustments(dialog, dest_path)
+            _remember_subtitle(folder_name, {'url': chosen['url'], 'fileName': chosen.get('fileName') or target_filename},
+                               adjust)
             return
         # Cancel/back on existing subtitles: fall through and fetch new subtitles to override.
 
@@ -193,19 +223,12 @@ def add_subtitles(folder_name, account_index):
         dialog.ok(APP_NAME, DIALOG_SUBS_DOWNLOAD_FAILED)
         return
 
-    subtitle_url = fetcher.get_subtitle_url(sub_id)
-    if not any(saved.get('url') == subtitle_url for saved in subs):
-        metadata = {
-            'url': subtitle_url,
-            'fileName': target_filename,
-            'language': chosen.get('language', language_code),
-            'hi': chosen.get('isHearingImpaired', False),
-        }
-        subs.append(metadata)
-
-    override['subs'] = subs
-    overrides[folder_name] = override
-    save_overrides(overrides)
+    _remember_subtitle(folder_name, {
+        'url': fetcher.get_subtitle_url(sub_id),
+        'fileName': target_filename,
+        'language': chosen.get('language', language_code),
+        'hi': chosen.get('isHearingImpaired', False),
+    }, {})
     _notify_saved(dialog, dest_path, target_filename)
 
 

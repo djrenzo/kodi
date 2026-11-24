@@ -1,4 +1,5 @@
 """Management > Push to Supabase: publish the whole TorBox catalog for the user addon.
+Management > Fetch overrides from Supabase: merge the pushed overrides back into overrides.json.
 
 What is pushed
   * overrides  - every overrides.json entry (auto and manual), raw entry included
@@ -25,9 +26,11 @@ from urllib.parse import unquote, urlparse
 
 import xbmc
 import xbmcgui
+import xbmcvfs
 
 from torbox_common import (
     APP_NAME,
+    OVERRIDES_FILE,
     VIDEO_EXTS,
     extract_bare_episode,
     extract_episode_info,
@@ -36,22 +39,32 @@ from torbox_common import (
     guess_season,
     load_overrides,
     log,
+    save_overrides,
 )
 from torbox_identify import SOURCE_AUTO, _folder_path, _normalize, _tmdb_get, root_folders
+from torbox_srt import adjustments_of
 from torbox_supabase import SupabaseClient, SupabaseError, is_configured
 from torbox_text import (
     DIALOG_SUPABASE_DELETE_OVERRIDES,
     DIALOG_SUPABASE_DONE,
     DIALOG_SUPABASE_EMPTY_OVERRIDES,
     DIALOG_SUPABASE_FAILED,
+    DIALOG_SUPABASE_FETCH_CONFIRM,
+    DIALOG_SUPABASE_FETCH_DONE,
+    DIALOG_SUPABASE_FETCH_EMPTY,
+    DIALOG_SUPABASE_FETCH_FAILED,
+    DIALOG_SUPABASE_FETCH_REPLACE,
+    DIALOG_SUPABASE_FETCH_UP_TO_DATE,
     DIALOG_SUPABASE_MODE,
     DIALOG_SUPABASE_MODE_CHANGED,
     DIALOG_SUPABASE_MODE_REFRESH,
     DIALOG_SUPABASE_NOT_ADMIN,
+    DIALOG_SUPABASE_RUN_MIGRATIONS,
     DIALOG_SUPABASE_NOT_CONFIGURED,
     DIALOG_SUPABASE_UNREACHABLE,
     NOTIFY_NO_ACCOUNTS,
     NOTIFY_SUPABASE_CANCELLED,
+    PROGRESS_SUPABASE_FETCH,
     PROGRESS_SUPABASE_LIST,
     PROGRESS_SUPABASE_LOGIN,
     PROGRESS_SUPABASE_TMDB,
@@ -369,6 +382,11 @@ def _subtitle_rows(folder_name, entry, title_id, synced_at):
             continue
         season, episode = extract_episode_info(file_name) if is_tv else (None, None)
         language = _text(sub.get('language')) or 'en'
+        try:
+            adjustments = adjustments_of(sub)
+        except (TypeError, ValueError):
+            log('Supabase push: ignoring invalid subtitle adjustments of {}'.format(file_name), xbmc.LOGWARNING)
+            adjustments = {}
         rows.append({
             'folder_name': folder_name,
             'title_id': title_id,
@@ -378,6 +396,9 @@ def _subtitle_rows(folder_name, entry, title_id, synced_at):
             'hearing_impaired': bool(sub.get('hi')),
             'file_name': file_name,
             'url': url,
+            'fps_from': adjustments.get('fps_from'),
+            'fps_to': adjustments.get('fps_to'),
+            'shift_ms': adjustments.get('shift_ms'),
             'synced_at': synced_at,
         })
     return rows
@@ -587,8 +608,11 @@ def push_to_supabase():
     except Exception as exc:
         progress.close()
         log('Supabase push failed: {}'.format(traceback.format_exc()), xbmc.LOGERROR)
-        dialog.ok(APP_NAME, DIALOG_SUPABASE_FAILED.format(exc if isinstance(exc, SupabaseError)
-                                                          else '{}: {}'.format(type(exc).__name__, exc)))
+        message = DIALOG_SUPABASE_FAILED.format(exc if isinstance(exc, SupabaseError)
+                                                else '{}: {}'.format(type(exc).__name__, exc))
+        if 'schema cache' in str(exc):  # PostgREST: a column/table the database doesn't have yet
+            message += DIALOG_SUPABASE_RUN_MIGRATIONS
+        dialog.ok(APP_NAME, message)
         return
     progress.close()
 
@@ -597,3 +621,88 @@ def push_to_supabase():
     if stats['incomplete_accounts']:
         message += DIALOG_SUPABASE_UNREACHABLE.format(', '.join(stats['incomplete_accounts']))
     dialog.ok(APP_NAME, message)
+
+
+# --- fetch -------------------------------------------------------------------------
+
+BACKUP_FILE = OVERRIDES_FILE[:-len('.json')] + '.backup.json'
+
+
+def merge_overrides(local, remote, replace_changed):
+    """(merged, stats). Folders only in Supabase are added; folders that differ are
+    replaced only if replace_changed; folders only present locally are always kept."""
+    merged = dict(local)
+    stats = {'added': 0, 'replaced': 0, 'kept': 0}
+    for folder_name, entry in remote.items():
+        if folder_name not in local:
+            merged[folder_name] = entry
+            stats['added'] += 1
+        elif local[folder_name] != entry:
+            if replace_changed:
+                merged[folder_name] = entry
+                stats['replaced'] += 1
+            else:
+                stats['kept'] += 1
+    stats['kept'] += sum(1 for folder_name in local if folder_name not in remote)
+    return merged, stats
+
+
+def fetch_from_supabase():
+    """Management > Fetch overrides from Supabase: restore or update overrides.json from
+    the raw entries of the last push. Works with reader logins too (it only reads)."""
+    dialog = xbmcgui.Dialog()
+    if not is_configured():
+        dialog.ok(APP_NAME, DIALOG_SUPABASE_NOT_CONFIGURED)
+        return
+
+    progress = xbmcgui.DialogProgress()
+    progress.create(APP_NAME, PROGRESS_SUPABASE_LOGIN)
+    try:
+        client = SupabaseClient()
+        client.login()
+        progress.update(50, PROGRESS_SUPABASE_FETCH)
+        rows = client.select_all('overrides', 'folder_name,raw', 'folder_name')
+    except Exception as exc:
+        progress.close()
+        log('Supabase fetch failed: {}'.format(traceback.format_exc()), xbmc.LOGERROR)
+        dialog.ok(APP_NAME, DIALOG_SUPABASE_FETCH_FAILED.format(exc if isinstance(exc, SupabaseError)
+                                                                else '{}: {}'.format(type(exc).__name__, exc)))
+        return
+    progress.close()
+
+    remote = {row['folder_name']: row['raw'] for row in rows if isinstance(row.get('raw'), dict)}
+    if not remote:
+        dialog.ok(APP_NAME, DIALOG_SUPABASE_FETCH_EMPTY)
+        return
+
+    local = load_overrides()
+    new = [name for name in remote if name not in local]
+    changed = sorted(name for name in remote if name in local and local[name] != remote[name])
+    counts = {
+        'total': len(remote),
+        'new': len(new),
+        'changed': len(changed),
+        'same': len(remote) - len(new) - len(changed),
+        'local_only': sum(1 for name in local if name not in remote),
+    }
+    if not new and not changed:
+        dialog.ok(APP_NAME, DIALOG_SUPABASE_FETCH_UP_TO_DATE.format(**counts))
+        return
+    if not dialog.yesno(APP_NAME, DIALOG_SUPABASE_FETCH_CONFIRM.format(**counts)):
+        return
+
+    replace_changed = False
+    if changed:
+        preview = '\n'.join(name[:70] for name in changed[:8])
+        if len(changed) > 8:
+            preview += '\n...'
+        replace_changed = dialog.yesno(APP_NAME, DIALOG_SUPABASE_FETCH_REPLACE.format(len(changed), preview))
+
+    merged, stats = merge_overrides(local, remote, replace_changed)
+    if stats['added'] == 0 and stats['replaced'] == 0:
+        return
+    if xbmcvfs.exists(OVERRIDES_FILE) and not xbmcvfs.copy(OVERRIDES_FILE, BACKUP_FILE):
+        log('Supabase fetch: could not back up overrides.json', xbmc.LOGWARNING)
+    save_overrides(merged)
+    log('Supabase fetch done: {}'.format(stats))
+    dialog.ok(APP_NAME, DIALOG_SUPABASE_FETCH_DONE.format(**stats))

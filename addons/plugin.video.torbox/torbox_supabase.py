@@ -10,7 +10,7 @@ import json
 import os
 import time
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 import xbmc
@@ -30,9 +30,19 @@ class SupabaseError(Exception):
         self.status = status
 
 
+def project_url(url):
+    """https://<ref>.supabase.co, also when a URL with a path was pasted (the dashboard's
+    Data API page shows https://<ref>.supabase.co/rest/v1)."""
+    url = (url or '').strip()
+    parts = urlsplit(url)
+    if parts.scheme and parts.netloc:
+        return '{}://{}'.format(parts.scheme, parts.netloc)
+    return url.rstrip('/')
+
+
 def get_config():
     return {
-        'url': ADDON.getSettingString('supabase_url').strip().rstrip('/'),
+        'url': project_url(ADDON.getSettingString('supabase_url')),
         'key': ADDON.getSettingString('supabase_key').strip(),
         'email': ADDON.getSettingString('supabase_email').strip(),
         'password': ADDON.getSettingString('supabase_password'),
