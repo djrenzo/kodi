@@ -3,8 +3,9 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from typing import List, Optional, TypedDict
-from urllib.parse import quote_plus, urlencode
+from urllib.parse import quote_plus, unquote, urlencode
 
 import xbmc
 import xbmcaddon
@@ -217,15 +218,36 @@ def extract_episode_info(filename):
 
 
 def extract_bare_episode(filename):
-    """Episode number from names that carry no season, e.g. 'Show.2019.E02.1080p' or 'Show - E21 [BD]'."""
+    """Episode number from names that carry no season, e.g. 'Show.2019.E02.1080p',
+    'Show - E21 [BD]' or a leading number as in '08 - Title.mkv'."""
     match = re.search(r'(?<![A-Za-z0-9])(?:Episode[ ._-]?|EP?)(\d{1,3})(?!\d)', filename, re.IGNORECASE)
+    if not match:
+        match = re.match(r'\s*(\d{1,3})(?:\s*[-–.]\s*|\s+|_)(?=\D)', filename)
     return int(match.group(1)) if match else None
 
 
 def guess_season(name):
-    """Season hinted by a folder name ('S01', 'Season 2'), or None."""
-    match = re.search(r'\b(?:S|Season[ ._-]?)(\d{1,2})\b', name or '', re.IGNORECASE)
+    """Season hinted by a folder name ('S01', 'Season 2', 'Saison 3'), or None."""
+    match = re.search(r'\b(?:S|(?:Season|Saison|Temporada|Staffel|Stagione)[ ._-]?)(\d{1,2})\b',
+                      name or '', re.IGNORECASE)
     return int(match.group(1)) if match else None
+
+
+def subfolder_season(item, root_name):
+    """Season hinted by the subfolders between a show's root folder and one of its files,
+    e.g. 'Show.Saison.3.1080p/08 - Title.mkv' -> 3. None when the file sits in the root
+    folder or no subfolder names a season."""
+    def norm(text):
+        return unicodedata.normalize('NFC', text or '')
+    parts = [norm(p) for p in unquote(item.get('path') or '').split('/') if p][:-1]
+    root = norm(root_name).rstrip('/')
+    if root not in parts:
+        return None
+    for part in reversed(parts[len(parts) - parts[::-1].index(root):]):
+        season = guess_season(part)
+        if season is not None:
+            return season
+    return None
 
 
 def get_accounts() -> List[Account]:

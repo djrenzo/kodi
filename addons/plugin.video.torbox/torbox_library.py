@@ -22,6 +22,7 @@ from torbox_common import (
     get_account,
     get_accounts,
     guess_season,
+    subfolder_season,
     load_overrides,
     log,
     save_overrides,
@@ -339,7 +340,8 @@ def _ask_season(raw_name, missing_count, overrides):
 
 def numbered_episodes(raw_name, episodes, overrides):
     """Return [(item, season, episode_no)] for the files that can be numbered.
-    Files with only an episode number (e.g. 'E02') get a season asked from the user.
+    Files with only an episode number (e.g. 'E02', '08 - Title') take the season of their
+    subfolder ('Show.Saison.3/'), otherwise a season asked from the user.
     A forced season override replaces the season of every file (S04E01 -> S03E01)."""
     override = overrides.get(raw_name, {})
     forced = int(override['season']) if override.get('force_season') and override.get('season') is not None else None
@@ -353,7 +355,12 @@ def numbered_episodes(raw_name, episodes, overrides):
             numbered.append((item, season, episode_no))
             continue
         episode_no = extract_bare_episode(item['name'])
-        if episode_no is not None:
+        if episode_no is None:
+            continue
+        season = forced if forced is not None else subfolder_season(item, raw_name)
+        if season is not None:
+            numbered.append((item, season, episode_no))
+        else:
             bare.append((item, episode_no))
 
     if bare:

@@ -37,6 +37,7 @@ from torbox_common import (
     get_accounts,
     get_tmdb_key,
     guess_season,
+    subfolder_season,
     load_overrides,
     log,
     save_overrides,
@@ -191,8 +192,9 @@ def _list_account(account, progress, start, span):
 
 def number_files(raw_name, override, items):
     """[(item, season, episode, is_main)], numbered like the library export does: a forced
-    season replaces the file's season, files with only an episode number take the season
-    override or the season in the folder name. Movies: the largest file is the main one."""
+    season replaces the file's season, files with only an episode number take the season of
+    their subfolder, else the season override or the season in the folder name. Movies: the
+    largest file is the main one."""
     if _media_type(override) == 'movie' and override.get('title'):
         main = max(items, key=lambda item: item['size']) if items else None
         return [(item, None, None, item is main) for item in items]
@@ -208,7 +210,9 @@ def number_files(raw_name, override, items):
         else:
             episode = extract_bare_episode(item['name'])
             if episode is not None:
-                season = season_override if season_override is not None else guess_season(raw_name)
+                season = forced if forced is not None else subfolder_season(item, raw_name)
+                if season is None:
+                    season = season_override if season_override is not None else guess_season(raw_name)
         numbered.append((item, season, episode, False))
     return numbered
 

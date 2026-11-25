@@ -59,7 +59,13 @@ _TV_RE = re.compile(
     r'|\bE(?:P)?\d{2,3}\b',
     re.IGNORECASE,
 )
-_SEASON_FOLDER_RE = re.compile(r'^(?:S\d{1,2}|Season[ ._-]?\d{1,2}|Temporada[ ._-]?\d{1,2})\b', re.IGNORECASE)
+_SEASON_FOLDER_RE = re.compile(r'^(?:S\d{1,2}|(?:Season|Saison|Temporada|Staffel)[ ._-]?\d{1,2})\b', re.IGNORECASE)
+# Words packs add after the title ('Game.Of.Thrones.Integral.(S01 à S08)'); they'd spoil the TMDB match.
+_PACK_WORDS_RE = re.compile(
+    r'(?:\s+(?:Int[ée]grale?|Complete|Completa|Completo|Collection|Colecci[oó]n|Box[ ]?Set|'
+    r'Full[ ]Series|Serie[s]?[ ]Completa))+$',
+    re.IGNORECASE,
+)
 _BRACKET_RE = re.compile(r'[\[({]')
 
 
@@ -97,6 +103,7 @@ def parse_release_name(name):
 
     title = value[:min(cuts)]
     title = re.sub(r'[\s\-–:(\[{]+$', '', title).strip()
+    title = _PACK_WORDS_RE.sub('', unicodedata.normalize('NFC', title)).strip()
     if not title:
         title = value
     return {'title': title, 'year': year, 'tv_hint': bool(tv_match)}
